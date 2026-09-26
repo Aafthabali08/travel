@@ -2,12 +2,45 @@ import pytest
 from pydantic import ValidationError
 from backend.app.models import *
 from backend.app.engines import *
-from backend.app.demo import PLACES, edges
+
+A = Place(id="live-a", name="RK Beach", lat=17.7145, lng=83.3237)
+STOP = Place(id="live-stop", name="RK Beach bus stop", lat=17.7114, lng=83.3183)
+B = Place(id="live-b", name="Railway Station", lat=17.7215, lng=83.2905)
+
+
+def leg(mode, origin, destination, meters, seconds, cost, line=None):
+    return Leg(
+        mode=mode,
+        origin=origin,
+        destination=destination,
+        distance=meters,
+        duration=seconds,
+        cost=cost,
+        source="test",
+        line=line,
+    )
 
 
 @pytest.fixture
 def query():
-    return Search(origin=PLACES[0], destination=PLACES[1], demo=True)
+    return Search(origin=A, destination=B)
+
+
+@pytest.fixture
+def routes():
+    walk = summarize(Route(id="walk", name="Walk", legs=[leg("WALK", A, B, 4300, 3600, 0)]))
+    bus = summarize(
+        Route(
+            id="bus",
+            name="Public transport",
+            legs=[
+                leg("WALK", A, STOP, 400, 300, 0),
+                leg("BUS", STOP, B, 5600, 900, 12, line="99"),
+            ],
+        )
+    )
+    bike = summarize(Route(id="bike", name="Personal bike", legs=[leg("BIKE", A, B, 3900, 600, 10)]))
+    return [walk, bus, bike]
 
 
 def test_petrol_cost():
@@ -44,93 +77,58 @@ def test_negative_distance():
         fuel_cost(-1, Vehicle())
 
 
-def test_fares_and_unknown():
-    assert (
-        fare(5, {"base": 20, "included_km": 2, "per_km": 10, "source": "Configured"})[
-            "cost"
-        ]
-        == 50
-    )
-    assert fare(5, None)["cost"] is None
+def test_summary_totals(routes):
+    bus = routes[1]
+    assert bus.distance == 6000
+    assert bus.walking == 400
+    assert bus.cost == 12
+    assert bus.transfers == 0
 
 
-def test_graph_connected(query):
-    results = graph_routes(
-        edges(query.origin, query.destination, query.vehicle),
-        query.origin.id,
-        query.destination.id,
-    )
-    assert results
-    assert any([l.mode for l in r.legs] == ["WALK", "BUS", "WALK"] for r in results)
-    assert all(
-        r.legs[0].origin == query.origin and r.legs[-1].destination == query.destination
-        for r in results
-    )
-
-
-def test_graph_limit(query):
-    assert (
-        len(
-            graph_routes(
-                edges(query.origin, query.destination, query.vehicle),
-                query.origin.id,
-                query.destination.id,
-                max_results=2,
-            )
-        )
-        == 2
-    )
-
-
-def test_graph_no_path(query):
-    assert graph_routes([], query.origin.id, query.destination.id) == []
-
-
-def test_budget_and_walking(query):
-    results = graph_routes(
-        edges(query.origin, query.destination, query.vehicle),
-        query.origin.id,
-        query.destination.id,
-    )
+def test_budget_and_walking(query, routes):
     query.max_budget = 0
     query.max_walking = 0
-    assert not any(feasible(r, query) for r in results)
+    assert not any(feasible(r, query) for r in routes if r.id != "walk")
+    query.max_walking = 5000
+    assert feasible(routes[0], query)
 
 
 def test_disconnected_rejected(query):
-    e = edges(query.origin, query.destination, query.vehicle)
-    r = summarize(Route(id="x", name="invalid", legs=[e[0], e[2]]))
-    assert not feasible(r, query)
+    gap = summarize(
+        Route(
+            id="x",
+            name="invalid",
+            legs=[leg("WALK", A, STOP, 400, 300, 0), leg("BUS", A, B, 5600, 900, 12)],
+        )
+    )
+    assert not feasible(gap, query)
 
 
 def test_unknown_fare_budget(query):
-    leg = edges(query.origin, query.destination, query.vehicle)[4].model_copy(
-        update={"cost": None}
-    )
-    route = summarize(Route(id="unknown", name="Unknown", legs=[leg]))
+    route = summarize(Route(id="unknown", name="Unknown", legs=[leg("BUS", A, B, 5000, 900, None)]))
     query.max_budget = 100000
     assert not feasible(route, query)
 
 
-def test_pareto_dominated(query):
-    leg = edges(query.origin, query.destination, query.vehicle)[4]
-    a = summarize(Route(id="a", name="A", legs=[leg]))
+def test_modes_must_be_selected(query, routes):
+    query.modes = ["WALK"]
+    query.max_walking = 5000
+    assert [r.id for r in routes if feasible(r, query)] == ["walk"]
+
+
+def test_pareto_dominated(routes):
+    a = routes[1]
     b = a.model_copy(deep=True)
     b.id = "b"
     b.cost += 100
     b.duration += 10
-    b.legs[0].line = "different"
-    assert [r.id for r in pareto([a, b])] == ["a"]
+    b.legs[1].line = "different"
+    assert [r.id for r in pareto([a, b])] == ["bus"]
 
 
-def test_rank_cheapest_and_fastest(query):
-    results = graph_routes(
-        edges(query.origin, query.destination, query.vehicle),
-        query.origin.id,
-        query.destination.id,
-    )
-    assert rank(results, "cheapest")[0].cost == 0
-    assert rank(results, "fastest")[0].duration == 10
+def test_rank_cheapest_and_fastest(routes):
+    assert rank(routes, "cheapest")[0].id == "walk"
+    assert rank(routes, "fastest")[0].id == "bike"
 
 
 def test_gps_near_segment_not_just_nodes():
@@ -179,7 +177,7 @@ def test_arrival():
 
 def test_same_origin_destination():
     with pytest.raises(ValidationError):
-        Search(origin=PLACES[0], destination=PLACES[0])
+        Search(origin=A, destination=A)
 
 
 def test_remaining_distance_follows_polyline():

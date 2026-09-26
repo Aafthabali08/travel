@@ -57,7 +57,6 @@ export type Route = {
   id: string;
   name: string;
   legs: Leg[];
-  demo: boolean;
   cost: number | null;
   duration: number;
   distance: number;
@@ -74,10 +73,4 @@ export type Vehicle = {
   unit_price: number;
   parking: number;
   toll: number;
-};
-export type Log = {
-  time: string;
-  event: string;
-  level: "INFO" | "WARN" | "ERROR";
-  detail: string;
 };

@@ -1,6 +1,5 @@
 import math
 import time
-import uuid
 from .models import Point, Route, Vehicle, Search, GPS, Leg
 
 
@@ -21,20 +20,6 @@ def fuel_cost(km: float, vehicle: Vehicle):
         "total": round(units * vehicle.unit_price + vehicle.toll + vehicle.parking, 2),
         "source": "User configured estimate",
         "unit": "kWh" if vehicle.mode == "EV" else "fuel units",
-    }
-
-
-def fare(km: float, rule: dict | None):
-    if km < 0:
-        raise ValueError("Distance cannot be negative")
-    if rule is None:
-        return {"cost": None, "source": "Unavailable"}
-    return {
-        "cost": round(
-            rule["base"] + max(0, km - rule.get("included_km", 0)) * rule["per_km"], 2
-        ),
-        "source": rule["source"],
-        "effective_date": rule.get("effective_date"),
     }
 
 
@@ -127,42 +112,6 @@ def rank(routes: list[Route], preference: str, weights=(0.5, 0.3, 0.1, 0.1)):
             else (r.score,)
         ),
     )
-
-
-def graph_routes(
-    edges: list[Leg], origin: str, destination: str, max_edges=6, max_results=50
-):
-    adjacency = {}
-    for edge in edges:
-        adjacency.setdefault(edge.origin.id, []).append(edge)
-    results = []
-
-    def visit(node, path, seen):
-        if len(results) >= max_results:
-            return
-        if node == destination:
-            if path:
-                results.append(
-                    summarize(
-                        Route(
-                            id=f"demo-{uuid.uuid4().hex}",
-                            name=" + ".join(
-                                dict.fromkeys(l.mode.title() for l in path)
-                            ),
-                            legs=path,
-                            demo=True,
-                        )
-                    )
-                )
-            return
-        if len(path) >= max_edges:
-            return
-        for edge in adjacency.get(node, []):
-            if edge.destination.id not in seen:
-                visit(edge.destination.id, path + [edge], seen | {edge.destination.id})
-
-    visit(origin, [], {origin})
-    return results
 
 
 def segment_distance(p, a, b):

@@ -160,15 +160,6 @@ button:hover {
   color: #7b8982;
   font-size: 12px;
 }
-.debug-toggle {
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 8px 11px;
-  font-size: 12px;
-}
-.debug-toggle.active {
-  background: var(--pale);
-}
 .avatar {
   display: flex;
   justify-content: center;
@@ -208,38 +199,6 @@ main {
 .page-heading p {
   font-size: 13px;
   color: #839088;
-}
-.mode-switch {
-  display: flex;
-  padding: 4px;
-  border: 1px solid #dfe7df;
-  border-radius: 8px;
-  background: #eef2ed;
-  align-self: flex-start;
-  margin-top: 20px;
-  gap: 2px;
-}
-.mode-switch button {
-  font-size: 12px;
-  border-radius: 5px;
-  padding: 8px 17px;
-  color: #8b968e;
-}
-.mode-switch button.selected {
-  background: white;
-  box-shadow: 0 2px 4px #223b3510;
-  color: var(--green);
-  font-weight: 700;
-}
-.status-off,
-.status-ready {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: #abb4ad;
-}
-.status-ready {
-  background: #4c9b6d;
 }
 .workspace {
   display: grid;
@@ -491,6 +450,9 @@ main {
 .filters label {
   font-size: 12px;
   color: #64796b;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
 }
 .filters input,
 .filters select {
@@ -686,30 +648,6 @@ main {
   inset: 0;
   z-index: 0;
 }
-.leaflet-container {
-  font-family: "DM Sans", sans-serif;
-  background: #eaf0e9;
-}
-.leaflet-tile-pane {
-  filter: saturate(0.35) brightness(1.035);
-}
-.leaflet-control-attribution {
-  font-size: 8px !important;
-  opacity: 0.75;
-}
-.route-marker span {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 3px solid white;
-  border-radius: 50%;
-  height: 30px;
-  width: 30px;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 700;
-  box-shadow: 0 2px 8px #27372a30;
-}
 .map-chip {
   position: absolute;
   top: 19px;
@@ -790,15 +728,6 @@ main {
 .line.vehicle {
   border-color: #7465bc;
 }
-.map-scale {
-  position: absolute;
-  bottom: 6px;
-  right: 10px;
-  font-size: 10px;
-  color: #586b59;
-  background: #ffffffcc;
-  padding: 2px 4px;
-}
 .map-bottom {
   height: 53px;
   border-top: 1px solid var(--line);
@@ -835,16 +764,6 @@ main {
   color: #6f826d;
   gap: 5px;
   padding: 5px;
-}
-.tile-warning {
-  position: absolute;
-  top: 60px;
-  left: 20px;
-  background: #fff5dc;
-  color: #8b6520;
-  font-size: 12px;
-  padding: 8px;
-  border-radius: 5px;
 }
 .map-unavailable {
   position: absolute;
@@ -1189,9 +1108,10 @@ main {
 }
 .leg-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px 10px;
   margin-top: 12px;
 }
 .small-primary {
@@ -1206,8 +1126,12 @@ main {
 }
 .leg-primary-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+.leg-actions button {
+  white-space: nowrap;
 }
 .nav-launch {
   position: relative;
@@ -1572,99 +1496,6 @@ footer button {
 .full {
   width: 100%;
 }
-.debug-panel {
-  position: fixed;
-  right: 18px;
-  bottom: 18px;
-  width: min(650px, calc(100vw - 36px));
-  height: 420px;
-  z-index: 1000;
-  background: #162a23;
-  color: #dbe8dd;
-  border: 1px solid #375243;
-  border-radius: 12px;
-  box-shadow: 0 15px 55px #10201950;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-.debug-panel header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 13px 17px;
-  border-bottom: 1px solid #31463a;
-}
-.debug-panel header > div {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-}
-.debug-panel header strong {
-  font-size: 13px;
-}
-.debug-panel header span {
-  font-size: 12px;
-  color: #829e88;
-}
-.debug-panel button {
-  color: #a5bfa6;
-  padding: 4px;
-}
-.debug-panel button:hover {
-  background: #294536;
-}
-.debug-panel > p {
-  font-size: 12px;
-  padding: 10px 17px;
-  color: #91a38b;
-  line-height: 1.5;
-}
-.debug-panel > input {
-  border: 1px solid #354e3d;
-  background: #203b2d;
-  border-radius: 4px;
-  color: #d0e4cc;
-  margin: 0 15px 10px;
-  padding: 8px;
-  font-size: 12px;
-}
-.log-list {
-  overflow: auto;
-  flex: 1;
-  padding: 0 15px 12px;
-  font-family: monospace;
-}
-.log-row {
-  display: flex;
-  align-items: baseline;
-  gap: 9px;
-  padding: 8px 0;
-  border-bottom: 1px solid #284032;
-  font-size: 12px;
-}
-.log-row time {
-  color: #718b76;
-  white-space: nowrap;
-}
-.log-row b {
-  color: #80af79;
-  font-size: 11px;
-}
-.log-row small {
-  display: block;
-  color: #8ca286;
-  overflow-wrap: anywhere;
-  line-height: 1.5;
-  margin-top: 4px;
-}
-.log-row.ERROR b,
-.log-row.ERROR small {
-  color: #f0a69b;
-}
-.log-row.WARN b {
-  color: #e3c78c;
-}
 .fatal-error {
   padding: 10vw;
   text-align: center;
@@ -1772,7 +1603,16 @@ footer button {
     gap: 15px;
   }
   .topbar nav {
+    margin-left: auto;
+    gap: 0;
+  }
+  .topbar nav .nav-active,
+  .top-right {
     display: none;
+  }
+  .topbar nav button {
+    gap: 6px;
+    font-size: 12px;
   }
   .brand {
     font-size: 23px;
@@ -1783,9 +1623,6 @@ footer button {
   }
   .top-right {
     gap: 10px;
-  }
-  .debug-toggle {
-    padding: 7px;
   }
   .avatar {
     display: none;
@@ -1810,13 +1647,6 @@ footer button {
     font-size: 12px;
     max-width: 230px;
     line-height: 1.65;
-  }
-  .mode-switch {
-    margin-top: 16px;
-  }
-  .mode-switch button {
-    padding: 7px 10px;
-    font-size: 12px;
   }
   .workspace {
     display: flex;
@@ -1890,17 +1720,17 @@ footer button {
   }
   .results-heading {
     margin: 25px 0 15px;
+    flex-direction: column;
     align-items: flex-start;
-    gap: 12px;
+    gap: 10px;
   }
   .results-heading h2 {
     font-size: 19px;
   }
   .data-badge {
-    font-size: 7px;
-    padding: 6px;
-    max-width: 108px;
-    line-height: 1.4;
+    font-size: 8px;
+    padding: 5px 8px;
+    white-space: nowrap;
   }
   .results-grid {
     grid-template-columns: 1fr;
@@ -1973,14 +1803,13 @@ footer button {
     height: 45px;
   }
   .error-banner {
-    flex-wrap: wrap;
+    align-items: flex-start;
     font-size: 12px;
   }
   .error-banner > div {
     flex: 1;
-  }
-  .error-banner > button:first-of-type {
-    margin-left: 25px;
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
   .source-notice {
     font-size: 12px;
@@ -1998,9 +1827,6 @@ footer button {
   footer > span {
     font-size: 10px;
   }
-  footer button {
-    margin-left: auto;
-  }
   .map-bottom strong {
     font-size: 12px;
   }
@@ -2009,6 +1835,18 @@ footer button {
   }
   .filter-toggle {
     font-size: 12px;
+  }
+}
+@media (max-width: 380px) {
+  .transport-options button span {
+    font-size: 11px;
+  }
+  .priority-options button {
+    min-width: 0;
+    padding: 12px 4px;
+  }
+  .priority-options svg {
+    display: none;
   }
 }
 @media (prefers-reduced-motion: reduce) {

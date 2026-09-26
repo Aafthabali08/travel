@@ -1,6 +1,6 @@
 # RouteWise
 
-React + TypeScript + FastAPI journey planner for Visakhapatnam. Solid-color UI; no gradients. Demo data is isolated from live Google Routes/Places responses. A failed live provider never falls back to demo data.
+React + TypeScript + FastAPI journey planner for Visakhapatnam, running on live Google Routes and Places data. Solid-color UI; no gradients. A failed provider is reported, never replaced with made-up routes.
 
 ## Run locally
 
@@ -15,15 +15,12 @@ Open http://127.0.0.1:5178. API documentation: http://127.0.0.1:8018/docs.
 
 `npm run dev` starts both servers and streams their output to the same terminal. Ctrl+C stops both. Frontend changes reload automatically; restart the command after Python changes.
 
-## Debugging
+## Logs
 
-- **Debug** in the top bar opens a searchable, downloadable event stream.
 - Errors appear on the page with request IDs. Render crashes have a recovery screen.
-- `logs/development.log`: combined frontend/API process output.
-- `logs/events.jsonl`: structured events with UTC timestamp, severity, event, request ID, elapsed time, and controlled context.
-- Logs include clicks, field changes (not values), map movement, GPS accuracy, navigation transitions, route generation/filtering/ranking, cost totals, validation failures, and external failures.
-- Continuous coordinates and location input values are not intentionally logged. GPS checks are processed without storing trails. Route results expire from process memory after 30 minutes; navigation session handles after two hours.
-- Terminal commands: `tail -f logs/development.log` or `tail -f logs/events.jsonl`.
+- The API writes structured JSON events (UTC time, severity, event, request ID, elapsed time) to stdout; browser warnings and errors are forwarded to it. On Render these appear in the service's **Logs** tab.
+- Locally: `logs/development.log` (combined process output) and `logs/events.jsonl` (structured events). Set `LOG_FILE=` (empty) to disable the file.
+- Coordinates and typed place names are not intentionally logged. GPS checks are processed without storing trails. Route results expire from process memory after 30 minutes; navigation session handles after two hours.
 
 ## Live maps
 
@@ -91,11 +88,9 @@ docker run --rm -p 10000:10000 -e PORT=10000 --env-file .env routewise
 
 ## Scope and data limitations
 
-The complete local app flow is usable now: select sample places, choose modes, apply budget/walking/time limits, compare routes, inspect legs, simulate navigation, save vehicle assumptions, inspect/export logs, and exercise error states. Demo geometry, schedules, numbers and fares are illustrative, never travel instructions.
+Google transit supplies the walk/bus combinations; private auto, cab and share auto routes use Google road distance with the fare model above. Routes are filtered by your budget, walking and time limits, deduplicated, Pareto-filtered within each kind of transport and ranked. The app does not invent bus-to-auto combinations without a licensed transport dataset. Field-test navigation on a phone before relying on it.
 
-Google adapters are implemented but require your credentials and a field test before using live navigation. Google transit supplies live multimodal walk/transit combinations. The bounded graph optimizer also supports a development transport graph, connectivity checks, deduplication, Pareto filtering, and configurable scoring weights. It does not invent live bus-to-auto combinations without a licensed transport dataset.
-
-PostgreSQL schema and GTFS importer are supplied, but no official local GTFS feed is bundled. Imported feeds are storage-ready; a time-dependent GTFS routing adapter remains future integration work. There is no AI explanation provider connected; displayed explanations are drawn from route facts. No authentication, public deployment, or production operations validation is claimed.
+PostgreSQL schema and GTFS importer are supplied, but no official local GTFS feed is bundled. Imported feeds are storage-ready; a time-dependent GTFS routing adapter remains future integration work. There is no AI explanation provider connected; displayed explanations are drawn from route facts. There are no user accounts.
 
 ## PostgreSQL and Docker
 
@@ -124,17 +119,16 @@ npm test
 npm run test:e2e
 ```
 
-The backend tests cover fuel/EV math, validation, fares, bounded graph generation, impossible connections, budget/walking limits, unknown fares, scoring, Pareto filtering, GPS accuracy/deviation/cooldowns, API errors, and demo/live separation. Browser tests cover the end-to-end journey, playback, logging, vehicle persistence, search, GPS denial, API failure display, and mobile overflow. Real Google API responses, PostgreSQL execution, Docker build, and physical GPS navigation require their respective services and are not validated by the offline suite.
+The backend tests cover fuel/EV math, fare cards and the learning model, vote rules, validation, disconnected legs, budget/walking limits, unknown fares, scoring, Pareto filtering, GPS accuracy/deviation/cooldowns, and API errors, with Google mocked. Browser tests use mocked Live responses for the journey, sorting, maps hand-off, live tracking, fare voting, vehicle settings, search, GPS denial, API failures, and mobile overflow. Real Google responses, Supabase, and physical GPS navigation need their services and a device.
 
 ## Source layout
 
-- `frontend/src/App.tsx`: planner, routes, navigation, settings and debug views.
-- `frontend/src/Map.tsx`: demo OpenStreetMap/Leaflet and live Google Maps adapters.
-- `frontend/src/api.ts`: client requests and mirrored event logging.
+- `frontend/src/App.tsx`: planner, routes, navigation, fare voting and settings.
+- `frontend/src/Map.tsx`: Google Maps view.
+- `frontend/src/api.ts`: client requests and error reporting.
 - `backend/app/models.py`: validated domain/API schemas.
-- `backend/app/engines.py`: fares, energy, graph, scoring, Pareto, navigation math.
+- `backend/app/engines.py`: energy cost, feasibility, scoring, Pareto, navigation math.
 - `backend/app/provider.py`: server-side Google Places, photos and Routes adapter.
-- `backend/app/demo.py`: isolated illustrative fixtures.
 - `backend/app/main.py`: API, error handling, request IDs, rate limits, expiring sessions.
 - `backend/app/fares.py`: researched fare cards, fuel prices and mileage presets with sources.
 - `backend/app/fare_model.py`: the open fare-learning model.

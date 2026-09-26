@@ -1,9 +1,12 @@
 from fastapi.testclient import TestClient
 from fastapi import HTTPException
 from backend.app.main import app, requests, cache, provider
-from backend.app.demo import PLACES
-from backend.app.models import Search
+from backend.app.models import Leg, Place, Route, Search
+from backend.app.engines import summarize
 import pytest
+
+A = Place(id="live-a", name="RK Beach", lat=17.7145, lng=83.3237)
+B = Place(id="live-b", name="Railway Station", lat=17.7215, lng=83.2905)
 
 
 @pytest.fixture
@@ -15,27 +18,56 @@ def client():
 
 @pytest.fixture
 def payload():
-    return Search(origin=PLACES[0], destination=PLACES[1], demo=True).model_dump()
+    return Search(origin=A, destination=B, modes=["WALK"]).model_dump()
+
+
+@pytest.fixture
+def google(monkeypatch):
+    async def routes(query, mode):
+        if mode != "WALK":
+            return []
+        walk = Leg(
+            mode="WALK",
+            origin=query.origin,
+            destination=query.destination,
+            distance=2500,
+            duration=1800,
+            cost=0,
+            source="Google Routes",
+            polyline=[A, B],
+        )
+        return [summarize(Route(id="walk-1", name="Walk", legs=[walk]))]
+
+    async def nothing(*args):
+        return []
+
+    monkeypatch.setattr(provider, "routes", routes)
+    monkeypatch.setattr(provider, "share_auto", nothing)
+    monkeypatch.setattr(provider, "hired", nothing)
 
 
 def test_health(client):
     assert client.get("/api/health").json()["status"] == "ok"
 
 
-def test_demo_search(client, payload):
+def test_config_has_no_demo_data(client):
+    config = client.get("/api/config").json()
+    assert "demo_places" not in config
+    assert config["fuel_prices"]["Petrol"]["price"] > 0
+
+
+def test_live_search_and_navigation(client, payload, google):
     r = client.post("/api/routes/search", json=payload)
     assert r.status_code == 200
     body = r.json()
-    assert body["routes"]
-    assert all(r["demo"] for r in body["routes"])
-    assert "Illustrative" in body["warnings"][0]
+    assert body["source"] == "Google Routes"
     assert r.headers["X-Request-ID"]
     route = body["routes"][0]
+    assert "demo" not in route
     assert client.get("/api/routes/" + route["id"]).status_code == 200
-    assert (
-        client.post("/api/navigation/start", json={"route_id": route["id"]}).status_code
-        == 200
-    )
+    started = client.post("/api/navigation/start", json={"route_id": route["id"]})
+    assert started.status_code == 200
+    assert started.json()["state"] == "NAVIGATION_STARTED"
 
 
 def test_invalid_coordinate_displayable(client, payload):
@@ -50,16 +82,7 @@ def test_same_place(client, payload):
     assert client.post("/api/routes/search", json=payload).status_code == 422
 
 
-def test_demo_cannot_accept_real_gps(client, payload):
-    payload["origin"]["id"] = "gps"
-    assert client.post("/api/routes/search", json=payload).status_code == 422
-
-
-def test_live_never_falls_back_to_demo(client, payload, monkeypatch):
-    payload["demo"] = False
-    payload["origin"]["id"] = "live-origin"
-    payload["destination"]["id"] = "live-destination"
-
+def test_provider_failure_is_reported_not_faked(client, payload, monkeypatch):
     async def broken(*args):
         raise HTTPException(502, "Provider unavailable")
 
@@ -75,15 +98,14 @@ def test_unknown_route(client):
     assert client.get("/api/routes/missing").status_code == 404
 
 
-def test_constraints_return_empty(client, payload):
-    payload["max_budget"] = 0
+def test_constraints_return_empty(client, payload, google):
     payload["max_walking"] = 0
     assert client.post("/api/routes/search", json=payload).json()["routes"] == []
 
 
-def test_demo_places(client):
-    r = client.get("/api/places/search?q=Railway&demo=true")
-    assert len(r.json()) == 1
+def test_place_search_needs_two_characters(client):
+    assert client.get("/api/places/search?q=R").json() == []
+    assert client.get("/api/places/search?q=" + "x" * 201).status_code == 422
 
 
 def test_log_validation(client):

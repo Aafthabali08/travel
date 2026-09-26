@@ -1,7 +1,11 @@
 import asyncio
 from backend.app.provider import GoogleProvider, decode
-from backend.app.models import Search, Vehicle
-from backend.app.demo import PLACES
+from backend.app.models import Place, Search, Vehicle
+
+PLACES = [
+    Place(id="live-a", name="RK Beach", lat=17.7145, lng=83.3237),
+    Place(id="live-b", name="Railway Station", lat=17.7215, lng=83.2905),
+]
 
 
 def test_decode_google_polyline():
@@ -45,7 +49,6 @@ def test_provider_preserves_steps_and_private_cost(monkeypatch):
     assert len(routes) == 1 and len(routes[0].legs) == 1
     assert len(routes[0].legs[0].steps) == 2
     assert routes[0].cost == 30
-    assert routes[0].demo is False
 
 
 def test_provider_empty_is_not_successful_fake_route(monkeypatch):

@@ -148,7 +148,7 @@ class GoogleProvider:
         if not key:
             raise HTTPException(
                 503,
-                "Live maps are not configured. Set GOOGLE_MAPS_API_KEY and GOOGLE_MAPS_BROWSER_KEY, or select Demo mode.",
+                "Live maps are not configured. Set GOOGLE_MAPS_API_KEY and GOOGLE_MAPS_BROWSER_KEY.",
             )
         headers = {"X-Goog-Api-Key": key}
         if fields:

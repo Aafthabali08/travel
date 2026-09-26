@@ -140,7 +140,7 @@ def client():
     return TestClient(app)
 
 
-def live_route(kind="auto", demo=False):
+def live_route(kind="auto"):
     leg = Leg(
         mode="AUTO",
         origin=A,
@@ -152,7 +152,7 @@ def live_route(kind="auto", demo=False):
         base_fare=75,
         cost=75,
     )
-    route = summarize(Route(id="r-" + kind, name="Private auto", legs=[leg], demo=demo))
+    route = summarize(Route(id="r-" + kind, name="Private auto", legs=[leg]))
     cache[route.id] = (time.time() + 1800, route)
     return route.id
 
@@ -170,9 +170,8 @@ def post_vote(client, route_id, voter, verdict="wrong", paid=None, leg=0):
     )
 
 
-def test_vote_rejects_expired_demo_and_unfared(client, db):
+def test_vote_rejects_expired_and_unfared(client, db):
     assert post_vote(client, "missing", "a").status_code == 404
-    assert post_vote(client, live_route(demo=True), "a").status_code == 422
     assert post_vote(client, live_route(), "a", leg=3).status_code == 422
     rid = live_route()
     cache[rid][1].legs[0].fare_kind = None

@@ -14,9 +14,8 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.exceptions import RequestValidationError
 from dotenv import load_dotenv
 from .models import Search, GPS, Event, Vehicle, Point, FareVote
-from .engines import graph_routes, feasible, pareto, rank, navigation, fuel_cost
+from .engines import feasible, pareto, rank, navigation, fuel_cost
 from .provider import GoogleProvider
-from .demo import PLACES, edges
 from .fares import RULES, FUEL_PRICES, MILEAGE_PRESETS, MILEAGE_SOURCE, STREE_SHAKTI, estimate
 from .fare_model import FareModel, band, PRIOR_WEIGHT, MIN_VOTERS, HALF_LIFE_DAYS, CLAMP
 from . import storage
@@ -180,7 +179,6 @@ def config():
         ),
         "browser_key": os.getenv("GOOGLE_MAPS_BROWSER_KEY", ""),
         "city": "Visakhapatnam",
-        "demo_places": [p.model_dump() for p in PLACES],
         "fuel_prices": FUEL_PRICES,
         "mileage_presets": MILEAGE_PRESETS,
         "mileage_source": MILEAGE_SOURCE,
@@ -205,13 +203,11 @@ def event(body: Event):
 
 
 @app.get("/api/places/search")
-async def search_places(q: str = "", demo: bool = False):
+async def search_places(q: str = ""):
     if len(q) < 2:
         return []
     if len(q) > 200:
         raise HTTPException(422, "Search is too long.")
-    if demo:
-        return [p.model_dump() for p in PLACES if q.lower() in p.name.lower()]
     return await provider.search(q)
 
 
@@ -280,68 +276,47 @@ async def route_search(query: Search):
     prune()
     log(
         "route.search.started",
-        demo=query.demo,
         preference=query.preference,
         modes=query.modes,
     )
     warnings = []
-    if query.demo:
-        ids = {p.id for p in PLACES}
-        if query.origin.id not in ids or query.destination.id not in ids:
-            raise HTTPException(
-                422,
-                "Demo routes require a sample origin and destination. Switch to Live for your GPS position.",
-            )
-        routes = graph_routes(
-            edges(query.origin, query.destination, query.vehicle),
-            query.origin.id,
-            query.destination.id,
+    modes = [m for m in ["WALK", "BICYCLE", query.vehicle.mode] if m in query.modes]
+    if any(m in query.modes for m in ["BUS", "TRAIN", "METRO"]):
+        modes.append("TRANSIT")
+    if any(m in query.modes for m in ["AUTO", "CAB"]):
+        warnings.append(
+            "Auto and cab fares are estimates from published fare cards and rider reports. The meter or app price may differ."
         )
-        warnings = [
-            "Illustrative demo journeys, fares, paths, and bus numbers. Do not use these for real navigation."
-        ]
-    else:
-        if query.origin.id.startswith("demo-") or query.destination.id.startswith(
-            "demo-"
-        ):
-            raise HTTPException(422, "Select live places before searching live routes.")
-        modes = [m for m in ["WALK", "BICYCLE", query.vehicle.mode] if m in query.modes]
-        if any(m in query.modes for m in ["BUS", "TRAIN", "METRO"]):
-            modes.append("TRANSIT")
-        if any(m in query.modes for m in ["AUTO", "CAB"]):
-            warnings.append(
-                "Auto and cab fares are estimates from published fare cards and rider reports. The meter or app price may differ."
+    jobs = [provider.routes(query, m) for m in modes]
+    if "AUTO" in query.modes:
+        modes.append("SHARE_AUTO")
+        jobs.append(provider.share_auto(query))
+    hired = [k for k, m in (("auto", "AUTO"), ("cab", "CAB")) if m in query.modes]
+    if hired:
+        modes.append("AUTO_CAB")
+        jobs.append(provider.hired(query, hired))
+    responses = await asyncio.gather(*jobs, return_exceptions=True)
+    routes = []
+    for mode, response in zip(modes, responses):
+        if isinstance(response, Exception):
+            detail = (
+                response.detail
+                if isinstance(response, HTTPException)
+                else "Provider response could not be processed."
             )
-        jobs = [provider.routes(query, m) for m in modes]
-        if "AUTO" in query.modes:
-            modes.append("SHARE_AUTO")
-            jobs.append(provider.share_auto(query))
-        hired = [k for k, m in (("auto", "AUTO"), ("cab", "CAB")) if m in query.modes]
-        if hired:
-            modes.append("AUTO_CAB")
-            jobs.append(provider.hired(query, hired))
-        responses = await asyncio.gather(*jobs, return_exceptions=True)
-        routes = []
-        for mode, response in zip(modes, responses):
-            if isinstance(response, Exception):
-                detail = (
-                    response.detail
-                    if isinstance(response, HTTPException)
-                    else "Provider response could not be processed."
+            log("provider.failed", "ERROR", mode=mode, message=detail)
+            warnings.append(f"{mode}: {detail}")
+        else:
+            if mode == "SHARE_AUTO" and not response:
+                warnings.append(
+                    "Share auto: no mapped auto stand within 1.5 km of your start."
                 )
-                log("provider.failed", "ERROR", mode=mode, message=detail)
-                warnings.append(f"{mode}: {detail}")
-            else:
-                if mode == "SHARE_AUTO" and not response:
-                    warnings.append(
-                        "Share auto: no mapped auto stand within 1.5 km of your start."
-                    )
-                routes.extend(response)
-        if not routes and any(isinstance(r, Exception) for r in responses):
-            raise HTTPException(502, " ".join(warnings))
-        await asyncio.to_thread(fare_model.refresh)
-        for route in routes:
-            price_route(route, query)
+            routes.extend(response)
+    if not routes and any(isinstance(r, Exception) for r in responses):
+        raise HTTPException(502, " ".join(warnings))
+    await asyncio.to_thread(fare_model.refresh)
+    for route in routes:
+        price_route(route, query)
     log("route.graph.generated", count=len(routes))
     filtered = [r for r in routes if feasible(r, query)]
     log("route.constraints.applied", before=len(routes), after=len(filtered))
@@ -363,7 +338,7 @@ async def route_search(query: Search):
         "routes": results,
         "warnings": warnings,
         "generated_at": time.time(),
-        "source": "demo" if query.demo else "Google Routes",
+        "source": "Google Routes",
     }
 
 
@@ -382,8 +357,8 @@ def start(body: dict):
     route = get_route(str(body.get("route_id", "")))
     session = uuid.uuid4().hex
     sessions[session] = (time.time() + 7200, route.id)
-    log("navigation.started", session=session, demo=route.demo)
-    return {"session_id": session, "state": "NAVIGATION_STARTED", "demo": route.demo}
+    log("navigation.started", session=session)
+    return {"session_id": session, "state": "NAVIGATION_STARTED"}
 
 
 @app.post("/api/navigation/check")
@@ -434,8 +409,6 @@ async def vote_fare(body: FareVote):
     if not entry:
         raise HTTPException(404, "This route has expired. Search again to rate its fare.")
     route = entry[1]
-    if route.demo:
-        raise HTTPException(422, "Demo fares are illustrative and can't be rated.")
     if body.leg >= len(route.legs):
         raise HTTPException(422, "Unknown journey step.")
     leg = route.legs[body.leg]

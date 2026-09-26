@@ -2,7 +2,6 @@ import {
   useEffect,
   useRef,
   useState,
-  useSyncExternalStore,
   Component,
   type ReactNode,
 } from "react";
@@ -17,7 +16,6 @@ import {
   ChevronDown,
   ChevronRight,
   Clock,
-  Code2,
   Compass,
   Footprints,
   Fuel,
@@ -27,10 +25,8 @@ import {
   MapPin,
   Navigation,
   Pause,
-  Play,
   Route as RouteIcon,
   Search,
-  Settings2,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
@@ -39,15 +35,13 @@ import {
   Wallet,
   X,
   Zap,
-  Download,
   CheckCircle2,
 } from "lucide-react";
-import { api, log, snapshot, subscribe } from "./api";
+import { api, log } from "./api";
 import { JourneyMap } from "./Map";
 import type {
   FareResearch,
   Leg,
-  Log,
   Mode,
   Place,
   Point,
@@ -321,13 +315,11 @@ function SearchBox({
   label,
   value,
   onChange,
-  demo,
   placeholder,
 }: {
   label: string;
   value: Place | null;
   onChange: (p: Place | null) => void;
-  demo: boolean;
   placeholder: string;
 }) {
   const [text, setText] = useState(value?.name || "");
@@ -341,11 +333,6 @@ function SearchBox({
     setResults([]);
   }, [value]);
   useEffect(() => {
-    setOpen(false);
-    setError("");
-    sequence.current++;
-  }, [demo]);
-  useEffect(() => {
     if (!open || text.length < 2) {
       setResults([]);
       return;
@@ -356,7 +343,7 @@ function SearchBox({
       setError("");
       try {
         const result = await api<Place[]>(
-          `/api/places/search?q=${encodeURIComponent(text)}&demo=${demo}`,
+          `/api/places/search?q=${encodeURIComponent(text)}`,
           undefined,
           controller.signal,
         );
@@ -371,13 +358,13 @@ function SearchBox({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [text, open, demo]);
+  }, [text, open]);
   async function choose(place: Place) {
     const n = ++sequence.current;
     try {
-      const full = demo
-        ? place
-        : await api<Place>(`/api/places/${encodeURIComponent(place.id)}`);
+      const full = await api<Place>(
+        `/api/places/${encodeURIComponent(place.id)}`,
+      );
       if (n !== sequence.current) return;
       onChange(full);
       setOpen(false);
@@ -443,78 +430,11 @@ function SearchBox({
             {value && text !== value.name && (
               <small>Select a result to change your journey.</small>
             )}
-            {!demo && <small>Powered by Google</small>}
+            <small>Powered by Google</small>
           </div>
         </>
       )}
     </div>
-  );
-}
-function DebugPanel({ onClose }: { onClose: () => void }) {
-  const events = useSyncExternalStore(subscribe, snapshot);
-  const [filter, setFilter] = useState("");
-  const end = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    end.current?.scrollIntoView({ block: "nearest" });
-  }, [events]);
-  const exportLogs = () => {
-    const blob = new Blob([events.map((e) => JSON.stringify(e)).join("\n")], {
-      type: "application/x-ndjson",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "routewise-events.jsonl";
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-  return (
-    <aside className="debug-panel">
-      <header>
-        <div>
-          <Code2 size={19} />
-          <strong>Journey debugger</strong>
-          <span>{events.length} events</span>
-        </div>
-        <div>
-          <button onClick={exportLogs} aria-label="Export debug logs">
-            <Download size={17} />
-          </button>
-          <button onClick={onClose} aria-label="Close debugger">
-            <X size={18} />
-          </button>
-        </div>
-      </header>
-      <p>
-        UI actions, map motion, GPS checks, API requests, and routing decisions.
-        Mirrored to your terminal.
-      </p>
-      <input
-        aria-label="Filter logs"
-        placeholder="Filter events or errors…"
-        value={filter}
-        onChange={(e) => setFilter(e.target.value)}
-      />
-      <div className="log-list">
-        {events
-          .filter((e) =>
-            `${e.event} ${e.detail} ${e.level}`
-              .toLowerCase()
-              .includes(filter.toLowerCase()),
-          )
-          .map((e, i) => (
-            <div className={`log-row ${e.level}`} key={i}>
-              <time>{e.time.slice(11, 23)}</time>
-              <b>{e.level}</b>
-              <span>
-                {e.event}
-                <small>{e.detail}</small>
-              </span>
-            </div>
-          ))}
-        <div ref={end} />
-      </div>
-    </aside>
   );
 }
 function VehicleSettings({
@@ -717,12 +637,10 @@ function VehicleSettings({
   );
 }
 export default function App() {
-  const [demo, setDemo] = useState(true);
   const [config, setConfig] = useState<
     | ({
         live_ready: boolean;
         browser_key: string;
-        demo_places: Place[];
       } & FareResearch)
     | null
   >(null);
@@ -750,8 +668,7 @@ export default function App() {
   const [position, setPosition] = useState<Point | null>(null),
     [accuracy, setAccuracy] = useState<number | null>(null),
     [gpsStatus, setGpsStatus] = useState("Location not shared");
-  const [debug, setDebug] = useState(false),
-    [settings, setSettings] = useState(false),
+  const [settings, setSettings] = useState(false),
     [vehicle, setVehicle] = useState<Vehicle>(() => {
       try {
         const p = JSON.parse(
@@ -768,7 +685,6 @@ export default function App() {
     [legIndex, setLegIndex] = useState(0),
     [navState, setNavState] = useState("READY"),
     [remaining, setRemaining] = useState<number | null>(null),
-    [simulated, setSimulated] = useState(0),
     [stepIndex, setStepIndex] = useState(0),
     [speed, setSpeed] = useState<number | null>(null),
     [lastFix, setLastFix] = useState<number | null>(null),
@@ -794,7 +710,6 @@ export default function App() {
     navVersion.current++;
     setActive(false);
     setNavState("READY");
-    setSimulated(0);
     setRemaining(null);
     setStepIndex(0);
     setNavMenu(-1);
@@ -817,12 +732,7 @@ export default function App() {
   useEffect(() => {
     api<typeof config>("/api/config")
       .then((c) => {
-        if (c) {
-          setConfig(c);
-          setOrigin(c.demo_places[0]);
-          setDestination(c.demo_places[1]);
-          log("app.ready", "Demo mode · Visakhapatnam");
-        }
+        if (c) setConfig(c);
       })
       .catch(fail);
     return () => {
@@ -831,84 +741,14 @@ export default function App() {
     };
   }, []);
   useEffect(() => {
-    const click = (e: MouseEvent) => {
-      const el = (e.target as HTMLElement).closest("button");
-      if (el)
-        log(
-          "interaction.click",
-          el.closest(".suggestions")
-            ? "place suggestion"
-            : el.closest(".route-card")
-              ? "route alternative"
-              : el.getAttribute("aria-label") ||
-                el.textContent?.trim().slice(0, 100) ||
-                "button",
-        );
-    };
-    const change = (e: Event) => {
-      const el = e.target as HTMLInputElement;
-      log(
-        "interaction.field_changed",
-        el.getAttribute("aria-label") || el.type || "field",
-      );
-    };
-    document.addEventListener("click", click);
-    document.addEventListener("change", change);
-    return () => {
-      document.removeEventListener("click", click);
-      document.removeEventListener("change", change);
-    };
-  }, []);
-  useEffect(() => {
-    if (!active || demo) return;
+    if (!active) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
-  }, [active, demo]);
-  useEffect(() => {
-    if (!active || !demo || !currentLeg) return;
-    const timer = setInterval(
-      () => setSimulated((v) => Math.min(1, v + 0.04)),
-      900,
-    );
-    return () => clearInterval(timer);
-  }, [active, demo, currentLeg]);
-  useEffect(() => {
-    if (!active || !demo || !currentLeg) return;
-    setRemaining(currentLeg.distance * (1 - simulated));
-    const path = currentLeg.polyline;
-    if (path.length > 1) {
-      const segment = simulated * (path.length - 1);
-      const i = Math.min(path.length - 2, Math.floor(segment));
-      const t = segment - i;
-      setPosition({
-        lat: path[i].lat + (path[i + 1].lat - path[i].lat) * t,
-        lng: path[i].lng + (path[i + 1].lng - path[i].lng) * t,
-      });
-    }
-    log(
-      "navigation.demo.motion",
-      `${Math.round(simulated * 100)}% of leg ${legIndex + 1}`,
-    );
-    if (simulated >= 1) {
-      setNavState("ARRIVED_AT_STOP");
-      setActive(false);
-    }
-  }, [simulated]);
-  function changeMode(next: boolean) {
-    invalidate();
-    setDemo(next);
-    setPosition(null);
-    setAccuracy(null);
-    setGpsStatus("Location not shared");
-    setOrigin(next ? config?.demo_places[0] || null : null);
-    setDestination(next ? config?.demo_places[1] || null : null);
-    log("data.mode_changed", next ? "demo" : "live");
-  }
+  }, [active]);
   function query() {
     return {
       origin,
       destination,
-      demo,
       preference,
       modes,
       max_budget: budget === "" ? null : Number(budget),
@@ -1011,15 +851,12 @@ export default function App() {
     );
   }
   function locate() {
-    if (demo) {
-      changeMode(false);
-    } else invalidate();
+    invalidate();
     requestGPS();
   }
   useEffect(() => {
     if (
       !active ||
-      demo ||
       !position ||
       !currentLeg ||
       accuracy === null ||
@@ -1122,24 +959,13 @@ export default function App() {
       await api("/api/navigation/start", { route_id: selected.id });
       if (version !== navVersion.current) return;
       setActive(true);
-      setNavState(
-        demo
-          ? "DEMO_PLAYBACK"
-          : currentLeg?.mode === "WALK"
-            ? "WALKING"
-            : "IN_TRANSIT",
-      );
+      setNavState(currentLeg?.mode === "WALK" ? "WALKING" : "IN_TRANSIT");
       setRemaining(currentLeg?.distance ?? null);
-      if (demo) {
-        setSimulated(0);
-        setAccuracy(null);
-      } else {
-        setMoved(0);
-        setSpeed(null);
-        setLastFix(null);
-        gpsPoint.current = null;
-        requestGPS(true);
-      }
+      setMoved(0);
+      setSpeed(null);
+      setLastFix(null);
+      gpsPoint.current = null;
+      requestGPS(true);
       log("navigation.leg.started", `Leg ${legIndex + 1}`);
     } catch (e) {
       fail(e);
@@ -1158,7 +984,6 @@ export default function App() {
     navVersion.current++;
     setActive(false);
     setNavMenu(-1);
-    setSimulated(0);
     setStepIndex(0);
     setRemaining(null);
     if (selected && legIndex < selected.legs.length - 1) {
@@ -1226,13 +1051,6 @@ export default function App() {
           <span className="city">
             <MapPin size={14} /> Visakhapatnam
           </span>
-          <button
-            className={`debug-toggle ${debug ? "active" : ""}`}
-            onClick={() => setDebug(!debug)}
-          >
-            <Code2 size={17} />
-            <span>Debug</span>
-          </button>
           <span className="avatar">RW</span>
         </div>
       </header>
@@ -1246,23 +1064,6 @@ export default function App() {
               journey.
             </p>
           </div>
-          <div className="mode-switch" aria-label="Data mode">
-            <button
-              className={demo ? "selected" : ""}
-              onClick={() => !demo && changeMode(true)}
-            >
-              Demo
-            </button>
-            <button
-              className={!demo ? "selected" : ""}
-              onClick={() => demo && changeMode(false)}
-            >
-              Live{" "}
-              <span
-                className={config?.live_ready ? "status-ready" : "status-off"}
-              />
-            </button>
-          </div>
         </div>
         {error && (
           <div className="error-banner" role="alert">
@@ -1271,9 +1072,6 @@ export default function App() {
               <strong>Something needs your attention</strong>
               <p>{error}</p>
             </div>
-            <button onClick={() => setDebug(true)}>
-              View logs <ArrowUpRight size={15} />
-            </button>
             <button aria-label="Dismiss error" onClick={() => setError("")}>
               <X size={18} />
             </button>
@@ -1299,7 +1097,6 @@ export default function App() {
                     invalidate();
                     setOrigin(p);
                   }}
-                  demo={demo}
                   placeholder="Where are you starting?"
                 />
                 <div className="field-divider" />
@@ -1310,7 +1107,6 @@ export default function App() {
                     invalidate();
                     setDestination(p);
                   }}
-                  demo={demo}
                   placeholder="Where do you want to go?"
                 />
               </div>
@@ -1516,7 +1312,6 @@ export default function App() {
               destination={destination}
               activeLeg={active ? legIndex : -1}
               browserKey={config?.browser_key || ""}
-              demo={demo}
               onError={setError}
             />
             <div className="map-bottom">
@@ -1524,13 +1319,11 @@ export default function App() {
                 <span
                   className={`gps-dot ${accuracy === null ? "inactive" : ""}`}
                 />
-                <strong>{demo ? "Explore a sample journey" : gpsStatus}</strong>
+                <strong>{gpsStatus}</strong>
                 <span className="accuracy">
                   {accuracy !== null
                     ? `±${Math.round(accuracy)} m accuracy`
-                    : demo
-                      ? "Live GPS available in Live mode"
-                      : "Your location stays private"}
+                    : "Your location stays private"}
                 </span>
               </div>
               <button onClick={locate}>
@@ -1556,7 +1349,7 @@ export default function App() {
           {searched && (
             <span className="data-badge">
               <span />
-              {demo ? "ILLUSTRATIVE DEMO DATA" : "PROVIDER ROUTE DATA"}
+              PROVIDER ROUTE DATA
             </span>
           )}
         </div>
@@ -1644,7 +1437,7 @@ export default function App() {
                     <strong>
                       {money(r.cost)}
                       {r.cost !== null && (
-                        <small>{r.demo ? "demo estimate" : r.cost_label}</small>
+                        <small>{r.cost_label}</small>
                       )}
                     </strong>
                   </div>
@@ -1672,7 +1465,7 @@ export default function App() {
                   <span className="detail-total">
                     {money(selected.cost)}
                     <small>
-                      total {selected.demo ? "demo cost" : "estimate"}
+                      total estimate
                     </small>
                   </span>
                 </div>
@@ -1734,8 +1527,7 @@ export default function App() {
                                 ` · + ₹${vehicle.parking + vehicle.toll} parking and tolls in the trip total`}
                             </p>
                           )}
-                        {!demo &&
-                          leg.fare_kind &&
+                        {leg.fare_kind &&
                           leg.cost !== null &&
                           leg.cost > 0 && (
                             <FareVote
@@ -1774,9 +1566,8 @@ export default function App() {
                                 </span>
                                 <small>
                                   {navState.replaceAll("_", " ")}
-                                  {demo ? " · SIMULATION" : ""}
                                 </small>
-                                {!demo && active && (
+                                {active && (
                                   <div className="live-stats" aria-live="polite">
                                     <span className="live-badge">
                                       <i /> LIVE
@@ -1802,7 +1593,7 @@ export default function App() {
                                 <div className="progress-track">
                                   <span
                                     style={{
-                                      width: `${demo ? simulated * 100 : Math.max(0, 100 - ((remaining ?? leg.distance) / leg.distance) * 100)}%`,
+                                      width: `${Math.max(0, 100 - ((remaining ?? leg.distance) / leg.distance) * 100)}%`,
                                     }}
                                   />
                                 </div>
@@ -1810,7 +1601,6 @@ export default function App() {
                             ) : null}
                             <div className="leg-actions">
                               <div className="leg-primary-actions">
-                              {!demo && (
                                 <div className="nav-launch">
                                   <button
                                     className="nav-button"
@@ -1861,10 +1651,9 @@ export default function App() {
                                     </div>
                                   )}
                                 </div>
-                              )}
-                              {active ? (
+                              {active && (
                                 <button
-                                  className={demo ? "small-primary" : "nav-secondary"}
+                                  className="nav-secondary"
                                   onClick={() => {
                                     navVersion.current++;
                                     setActive(false);
@@ -1877,18 +1666,8 @@ export default function App() {
                                     log("navigation.paused");
                                   }}
                                 >
-                                  <Pause size={12} />{" "}
-                                  {demo ? "Pause" : "Stop tracking"}
+                                  <Pause size={12} /> Stop tracking
                                 </button>
-                              ) : (
-                                demo && (
-                                  <button
-                                    className="small-primary"
-                                    onClick={startNavigation}
-                                  >
-                                    <Play size={14} /> Simulate this leg
-                                  </button>
-                                )
                               )}
                               </div>
                               <button className="text-button" onClick={nextLeg}>
@@ -1898,14 +1677,11 @@ export default function App() {
                                   : "Complete leg"}
                               </button>
                             </div>
-                            {!demo && (
-                              <p className="walking-warning">
-                                Directions are estimates. Follow local signs and
-                                traffic rules.
-                              </p>
-                            )}
-                            {!demo &&
-                              i < selected.legs.length - 1 &&
+                            <p className="walking-warning">
+                              Directions are estimates. Follow local signs and
+                              traffic rules.
+                            </p>
+                            {i < selected.legs.length - 1 &&
                               leg.destination.name !== "Route point" && (
                                 <StopPhoto place={leg.destination} />
                               )}
@@ -1936,7 +1712,7 @@ export default function App() {
                     <MapPin size={20} />
                     <strong>Know what to look for.</strong>
                   </div>
-                  {destination?.photo && !demo ? (
+                  {destination?.photo ? (
                     <>
                       <img
                         className="place-photo"
@@ -1954,9 +1730,8 @@ export default function App() {
                     </>
                   ) : (
                     <p>
-                      {demo
-                        ? "Place photos are available with live Google Places data. No unverified landmark is used in this demo."
-                        : "No photo is available for this place. Follow the route and mapped destination."}
+                      No photo is available for this place. Follow the route
+                      and mapped destination.
                     </p>
                   )}
                 </div>
@@ -1969,13 +1744,8 @@ export default function App() {
             <RouteIcon size={16} /> routewise.
           </div>
           <span>Made for the journey, not just the destination.</span>
-          <button onClick={() => setDebug(true)}>
-            <span className="green-dot" /> System logs{" "}
-            <ArrowUpRight size={13} />
-          </button>
         </footer>
       </main>
-      {debug && <DebugPanel onClose={() => setDebug(false)} />}{" "}
       {settings && (
         <VehicleSettings
           vehicle={vehicle}

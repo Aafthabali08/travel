@@ -50,7 +50,6 @@ class Route(BaseModel):
     id: str
     name: str
     legs: list[Leg] = Field(min_length=1)
-    demo: bool = False
     cost: float | None = None
     duration: float = 0
     distance: float = 0
@@ -73,7 +72,6 @@ class Vehicle(BaseModel):
 class Search(BaseModel):
     origin: Place
     destination: Place
-    demo: bool = False
     preference: Literal["balanced", "cheapest", "fastest", "walking", "transfers"] = (
         "balanced"
     )
