@@ -1,0 +1,16 @@
+node_modules
+.venv
+.git
+.env
+.env.*
+!.env.example
+.claude
+logs
+dist
+tests
+playwright-report
+test-results
+.pytest_cache
+__pycache__
+**/__pycache__
+backend/tests
