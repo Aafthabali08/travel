@@ -50,6 +50,9 @@ class Leg(BaseModel):
     fare_applied: bool = False
     fare_area_adjusted: bool = False
     fare_area_riders: int = 0
+    fare_time_adjusted: bool = False
+    fare_low: float | None = None
+    fare_high: float | None = None
     gemini_status: Literal["ok", "unavailable"] | None = None
     gemini_fare: float | None = None
     gemini_low: float | None = None

@@ -176,6 +176,11 @@ function FareCompare({ leg }: { leg: Leg }) {
             ? `Rider-checked by ${voters} riders`
             : `${voters} of ${needed} riders so far`}
         </small>
+        {leg.fare_low != null && leg.fare_high != null && (
+          <small className="fare-range">
+            Riders usually pay {money(leg.fare_low)}-{money(leg.fare_high)}
+          </small>
+        )}
       </div>
       {gemini && (
         <div className="fare-side gemini">

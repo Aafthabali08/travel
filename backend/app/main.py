@@ -5,6 +5,8 @@ import os
 import time
 import uuid
 import traceback
+import math
+from datetime import datetime
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from collections import defaultdict, deque
@@ -16,10 +18,11 @@ from dotenv import load_dotenv
 from .models import Search, GPS, Event, Vehicle, Point, FareVote
 from .engines import feasible, pareto, rank, navigation, fuel_cost
 from .provider import GoogleProvider
-from .fares import RULES, FUEL_PRICES, MILEAGE_PRESETS, MILEAGE_SOURCE, STREE_SHAKTI, estimate
+from .fares import IST, RULES, FUEL_PRICES, MILEAGE_PRESETS, MILEAGE_SOURCE, STREE_SHAKTI, estimate
 from .fare_model import (
     FareModel, band, cell, progress_message, PRIOR_WEIGHT, MIN_VOTERS, HALF_LIFE_DAYS, CLAMP,
-    CELL_DEGREES, ZONE_PRIOR_WEIGHT, MIN_ZONE_VOTERS, ZONE_CLAMP,
+    CELL_DEGREES, ZONE_PRIOR_WEIGHT, MIN_ZONE_VOTERS, ZONE_CLAMP, MIN_TIME_VOTERS, TIME_CLAMP,
+    DIST_BANDWIDTH, KERNEL_KM, NEIGHBOR_KM,
 )
 from . import gemini
 from . import storage
@@ -254,31 +257,46 @@ def leg_cells(leg):
     return cell(leg.origin.lat, leg.origin.lng), cell(leg.destination.lat, leg.destination.lng)
 
 
-def price_route(route, query):
+def now_ist():
+    return datetime.now(IST)
+
+
+def price_route(route, query, when=None):
+    when = when or now_ist()
     for leg in route.legs:
         if not leg.fare_kind:
             continue
         km = leg.distance / 1000
         rule = RULES[leg.fare_kind]
-        leg.base_fare = estimate(leg.fare_kind, km, leg.duration / 60)
+        leg.base_fare = estimate(leg.fare_kind, km, leg.duration / 60, when)
         if leg.fare_kind == "bus" and query.stree_shakti:
             leg.cost = 0
             leg.fare_basis = "Stree Shakti free travel (City Ordinary and Metro Express)"
             continue
-        stats = fare_model.get(leg.fare_kind, km, *leg_cells(leg))
+        stats = fare_model.get(leg.fare_kind, km, *leg_cells(leg), when.hour)
         leg.cost = float(round(leg.base_fare * stats["multiplier"]))
         leg.fare_reports = stats["reports"]
         leg.fare_voters = stats["voters"]
         leg.fare_applied = stats["applied"]
         leg.fare_area_adjusted = stats["area_applied"]
         leg.fare_area_riders = stats["area_riders"]
+        leg.fare_time_adjusted = stats["time_applied"]
+        if stats["spread"] is not None:
+            leg.fare_low = float(round(leg.cost * math.exp(-stats["spread"])))
+            leg.fare_high = float(round(leg.cost * math.exp(stats["spread"])))
         leg.fare_basis = (
             f"Rider-checked · {stats['voters']} riders"
             if stats["applied"]
             else f"Estimate · {rule['source']} (checked {rule['checked']})"
         )
+        if stats["provisional"]:
+            leg.fare_basis += (
+                f" · nudged by {stats['voters']} rider report{'s' if stats['voters'] != 1 else ''}"
+            )
         if stats["area_applied"]:
             leg.fare_basis += f" · adjusted for this area ({stats['area_riders']} riders nearby)"
+        if stats["time_applied"]:
+            leg.fare_basis += " · adjusted for this time of day"
     if any(l.fare_kind for l in route.legs):
         costs = [l.cost for l in route.legs]
         route.cost = (
@@ -331,8 +349,9 @@ async def route_search(query: Search):
     if not routes and any(isinstance(r, Exception) for r in responses):
         raise HTTPException(502, " ".join(warnings))
     await asyncio.to_thread(fare_model.refresh)
+    when = now_ist()
     for route in routes:
-        price_route(route, query)
+        price_route(route, query, when)
     log("route.graph.generated", count=len(routes))
     filtered = [r for r in routes if feasible(r, query)]
     log("route.constraints.applied", before=len(routes), after=len(filtered))
@@ -408,32 +427,32 @@ async def recalculate(query: Search):
 @app.get("/api/fares")
 async def fares():
     await asyncio.to_thread(fare_model.refresh)
+    learned = fare_model.summary()
     return {
         "model": {
-            "type": "Open Bayesian fare correction",
-            "formula": "fare = researched fare x exp(sum(w*ln(rider/researched)) / (prior + sum(w)))",
+            "type": "Open kernel-smoothed fare model learned from rider reports",
+            "formula": "fare = researched fare x exp(distance + area + time), each term a shrunk weighted mean of ln(rider fare / researched fare)",
             "prior_weight": PRIOR_WEIGHT,
             "min_riders": MIN_VOTERS,
             "half_life_days": HALF_LIFE_DAYS,
             "clamp": CLAMP,
+            "distance": {"bandwidth_ln_km": DIST_BANDWIDTH, "note": "smooth curve over exact trip distance"},
             "area": {
                 "cell_degrees": CELL_DEGREES,
                 "cell_size_km": 1.6,
+                "kernel_km": KERNEL_KM,
+                "neighbour_km": NEIGHBOR_KM,
                 "prior_weight": ZONE_PRIOR_WEIGHT,
                 "min_riders": MIN_ZONE_VOTERS,
                 "clamp": ZONE_CLAMP,
             },
+            "time": {"periods": ["night", "morning", "midday", "evening"], "min_riders": MIN_TIME_VOTERS,
+                     "clamp": TIME_CLAMP},
         },
         "rules": RULES,
-        "learned": [
-            {"kind": kind, "band": b, **stats}
-            for (kind, b), stats in sorted(fare_model.stats.items())
-        ],
-        "learned_areas": [
-            {"kind": kind, "cell": c, **stats}
-            for (kind, c), stats in sorted(fare_model.zones.items())
-            if stats["applied"]
-        ],
+        "learned": learned["kinds"],
+        "learned_areas": learned["areas"],
+        "learned_times": learned["times"],
         "votes_database": "connected" if fare_model.available else "unavailable",
         "stree_shakti": STREE_SHAKTI,
     }
@@ -470,9 +489,11 @@ async def vote_fare(body: FareVote):
         body.verdict,
         origin_cell,
         dest_cell,
+        km,
+        leg.duration / 60,
     )
     await asyncio.to_thread(fare_model.refresh, True)
-    stats = fare_model.get(leg.fare_kind, km, origin_cell, dest_cell)
+    stats = fare_model.get(leg.fare_kind, km, origin_cell, dest_cell, now_ist().hour)
     log("fare.voted", kind=leg.fare_kind, band=band(km), verdict=body.verdict)
     fare = round(leg.base_fare * stats["multiplier"])
     return {
@@ -480,7 +501,7 @@ async def vote_fare(body: FareVote):
         "band": band(km),
         "fare": fare,
         "needed": MIN_VOTERS,
-        "message": progress_message(stats["voters"], stats["applied"], fare),
+        "message": progress_message(stats["voters"], stats["applied"], fare, leg.base_fare),
         **stats,
     }
 

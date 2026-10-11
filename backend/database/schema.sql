@@ -23,7 +23,11 @@ CREATE TABLE IF NOT EXISTS fare_votes (
     created_at double precision NOT NULL,
     -- Coarse (~1.6 km) map cells of the trip's ends, never exact coordinates.
     origin_cell varchar(16),
-    dest_cell varchar(16)
+    dest_cell varchar(16),
+    -- Exact trip distance/duration and the hour of day (India time) the model learns from.
+    trip_km double precision,
+    trip_minutes double precision,
+    hour smallint
 );
 CREATE INDEX IF NOT EXISTS fare_votes_key_idx ON fare_votes (kind, band, created_at);
 -- Cached Gemini fare suggestions (AI estimates, never fed into the rider-report model).

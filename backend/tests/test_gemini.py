@@ -59,10 +59,10 @@ def db(tmp_path, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'gemini.db'}")
     storage._engine.cache_clear()
     storage.init_schema()
-    fare_model.stats, fare_model.loaded_at = {}, 0
+    fare_model.reset()
     yield
     storage._engine.cache_clear()
-    fare_model.stats, fare_model.loaded_at = {}, 0
+    fare_model.reset()
 
 
 def leg(kind="auto", km=5, minutes=15, cost=75):
@@ -491,8 +491,11 @@ def test_rider_reports_update_the_fare_gradually(client, hired, calls, db):
     route_id = first["id"]
 
     one = vote(client, route_id, "a")
-    assert one["message"] == "Thanks! 1 of 3 riders so far. The fare updates once 3 riders report it."
-    assert one["applied"] is False and one["fare"] == base_fare
+    assert one["message"].startswith(
+        "Thanks! 1 of 3 riders so far. The fare updates once 3 riders report it."
+    )
+    assert one["applied"] is False and base_fare < one["fare"] < base_fare * 1.1
+    assert one["message"].endswith(f"Your report already nudged it to ₹{one['fare']}.")
 
     again = vote(client, route_id, "a", paid=200)
     assert again["voters"] == 1
@@ -501,10 +504,11 @@ def test_rider_reports_update_the_fare_gradually(client, hired, calls, db):
     assert two["message"].startswith("Thanks! 2 of 3 riders so far")
     pending = search(client)["legs"][0]
     assert pending["fare_voters"] == 2 and pending["fare_applied"] is False
-    assert pending["cost"] == base_fare
+    assert pending["cost"] == two["fare"] > one["fare"]
+    assert "nudged by 2 rider reports" in pending["fare_basis"]
 
     three = vote(client, route_id, "c")
-    assert three["applied"] and three["fare"] > base_fare
+    assert three["applied"] and three["fare"] > two["fare"] > base_fare
     assert three["message"] == f"Thanks! This fare is now ₹{three['fare']}, learned from 3 riders."
     learned = search(client)["legs"][0]
     assert learned["fare_applied"] and learned["cost"] == three["fare"]

@@ -232,10 +232,10 @@ def db(tmp_path, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'ctx.db'}")
     storage._engine.cache_clear()
     storage.init_schema()
-    fare_model.stats, fare_model.zones, fare_model.rows, fare_model.loaded_at = {}, {}, [], 0
+    fare_model.reset()
     yield
     storage._engine.cache_clear()
-    fare_model.stats, fare_model.zones, fare_model.rows, fare_model.loaded_at = {}, {}, [], 0
+    fare_model.reset()
 
 
 @pytest.fixture
@@ -303,11 +303,14 @@ def test_a_new_rider_report_refreshes_the_suggestion_but_repeat_searches_are_cac
     assert len(prompts) == 2
 
 
-def test_rider_evidence_never_changes_our_own_fare_rules(client, hired, db, prompts):
+def test_gemini_never_sets_our_fare_riders_do(client, hired, db, prompts):
     first = search(client)
-    before = first["legs"][0]["cost"]
+    leg = first["legs"][0]
+    base, before = leg["base_fare"], leg["cost"]
+    assert before == float(round(base))
     for rider in range(1, 3):
         report(client, first["id"], rider, 150)
     after = search(client)["legs"][0]
-    assert after["cost"] == before and after["fare_applied"] is False
+    nudged = base * (150 / base) ** (2 / 12)
+    assert after["cost"] == float(round(nudged)) and after["fare_applied"] is False
     assert after["gemini_fare"] == 80

@@ -39,6 +39,9 @@ export type Leg = {
   fare_applied?: boolean;
   fare_area_adjusted?: boolean;
   fare_area_riders?: number;
+  fare_time_adjusted?: boolean;
+  fare_low?: number | null;
+  fare_high?: number | null;
   gemini_status?: "ok" | "unavailable" | null;
   gemini_fare?: number | null;
   gemini_low?: number | null;

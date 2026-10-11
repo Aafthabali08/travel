@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 from backend.app import storage
 from backend.app.fares import IST, estimate, is_night
-from backend.app.fare_model import FareModel, band, learn
+from backend.app.fare_model import FareModel, band
 from backend.app.main import app, cache, requests, provider, fare_model
 from backend.app.models import Leg, Place, Route, Search
 from backend.app.engines import summarize, pareto
@@ -19,12 +19,22 @@ B = Place(id="live-b", name="Railway Station", lat=17.7215, lng=83.2905)
 def vote(voter, verdict="wrong", paid=None, base=100, shown=100, age_days=0):
     return {
         "voter": voter,
+        "kind": "auto",
+        "band": "3-7 km",
+        "km": 5.0,
         "verdict": verdict,
         "paid": paid,
         "base": base,
         "shown": shown,
         "created_at": time.time() - age_days * 86400,
     }
+
+
+def learn(votes):
+    """What the model says for a 5 km auto trip after these reports."""
+    model = FareModel(lambda: list(votes))
+    model.refresh(force=True)
+    return model.get("auto", 5.0)
 
 
 def test_fare_cards_day_and_night():
@@ -54,20 +64,35 @@ def test_bands():
 
 
 def test_no_votes_keeps_researched_fare():
-    assert learn([]) == {
-        "multiplier": 1.0,
-        "reports": 0,
-        "voters": 0,
-        "disputed": 0,
-        "applied": False,
-    }
+    stats = learn([])
+    assert stats["multiplier"] == 1.0 and stats["voters"] == 0 and stats["reports"] == 0
+    assert stats["applied"] is False and stats["provisional"] is False and stats["spread"] is None
 
 
-def test_needs_three_riders_before_learning():
+def test_fewer_than_three_riders_only_nudge_the_fare():
+    one = learn([vote("a", paid=200)])
     two = learn([vote("a", paid=200), vote("b", paid=200)])
-    assert two["applied"] is False and two["multiplier"] == 1.0
-    same_rider = learn([vote("a", paid=200)] * 5)
-    assert same_rider["applied"] is False
+    for stats in (one, two):
+        assert stats["applied"] is False and stats["provisional"] is True
+    assert one["multiplier"] == pytest.approx(2 ** (1 / 16), abs=1e-3)
+    assert two["multiplier"] == pytest.approx(2 ** (2 / 12), abs=1e-3)
+    three = learn([vote(v, paid=200) for v in "abc"])
+    assert 1 < one["multiplier"] < two["multiplier"] < three["multiplier"]
+    assert three["applied"] and not three["provisional"]
+
+
+def test_one_rider_cannot_stack_up_a_bigger_nudge_by_reporting_again():
+    once = learn([vote("a", paid=200)])
+    many = learn([vote("a", paid=200, age_days=d) for d in range(30)])
+    assert many["voters"] == 1 and many["reports"] == 30 and many["applied"] is False
+    assert many["multiplier"] == pytest.approx(once["multiplier"], abs=0.01)
+    biggest = learn([vote("a", paid=390)])["multiplier"]
+    assert biggest < 1.1 and learn([vote("a", paid=26)])["multiplier"] > 0.9
+
+
+def test_a_nudge_follows_the_riders_newest_report():
+    changed_mind = learn([vote("a", paid=200, age_days=2), vote("a", paid=50, age_days=0)])
+    assert changed_mind["multiplier"] < 1.0
 
 
 def test_shrinks_toward_researched_fare():
@@ -85,7 +110,7 @@ def test_clamp_outliers_and_disputes():
     many = learn([vote(str(i), paid=390) for i in range(200)])
     assert many["multiplier"] == 2.0
     noisy = learn([vote(v, paid=1000) for v in "abcd"] + [vote("z")])
-    assert noisy["reports"] == 0 and noisy["disputed"] == 1
+    assert noisy["reports"] == 0 and noisy["voters"] == 0 and noisy["multiplier"] == 1.0
 
 
 def test_old_votes_fade():
@@ -127,10 +152,10 @@ def db(tmp_path, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'votes.db'}")
     storage._engine.cache_clear()
     storage.init_schema()
-    fare_model.stats, fare_model.loaded_at = {}, 0
+    fare_model.reset()
     yield
     storage._engine.cache_clear()
-    fare_model.stats, fare_model.loaded_at = {}, 0
+    fare_model.reset()
 
 
 @pytest.fixture
@@ -187,7 +212,8 @@ def test_vote_needs_database(client, monkeypatch):
 def test_riders_teach_the_model(client, db):
     rid = live_route()
     first = post_vote(client, rid, "a", paid=150).json()
-    assert first["applied"] is False and first["fare"] == 75
+    assert first["applied"] is False and 75 < first["fare"] < 80
+    assert first["message"].endswith(f"Your report already nudged it to ₹{first['fare']}.")
     post_vote(client, rid, "b", paid=150)
     third = post_vote(client, rid, "c", paid=150).json()
     assert third["applied"] and third["voters"] == 3
@@ -207,7 +233,8 @@ def test_one_vote_per_rider_per_day(client, db):
 
 
 def test_live_search_prices_every_leg(client, monkeypatch):
-    fare_model.stats, fare_model.loaded_at = {}, time.time()
+    fare_model.reset()
+    fare_model.loaded_at = time.time()
 
     async def routes(query, mode):
         if mode != "TRANSIT":

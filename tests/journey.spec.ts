@@ -369,9 +369,11 @@ test("our fare and Gemini's suggestion sit side by side with rider progress", as
     legs: [
       {
         ...autoRoute.legs[0],
-        fare_voters: 1,
+        fare_voters: 4,
         fare_needed: 3,
-        fare_applied: false,
+        fare_applied: true,
+        fare_low: 56,
+        fare_high: 73,
         gemini_status: "ok",
         gemini_fare: 70,
         gemini_low: 55,
@@ -391,7 +393,8 @@ test("our fare and Gemini's suggestion sit side by side with rider progress", as
         disputed: 0,
         applied: false,
         needed: 3,
-        message: "Thanks! 2 of 3 riders so far. The fare updates once 3 riders report it.",
+        message:
+          "Thanks! 2 of 3 riders so far. The fare updates once 3 riders report it. Your report already nudged it to ₹68.",
       },
     }),
   );
@@ -402,7 +405,8 @@ test("our fare and Gemini's suggestion sit side by side with rider progress", as
   const ai = page.locator(".fare-side.gemini");
   await expect(ours).toContainText("RouteWise fare");
   await expect(ours).toContainText("₹64");
-  await expect(ours).toContainText("1 of 3 riders so far");
+  await expect(ours).toContainText("Rider-checked by 4 riders");
+  await expect(ours).toContainText("Riders usually pay ₹56-₹73");
   await expect(ai).toContainText("Gemini suggests");
   await expect(ai).toContainText("₹70");
   await expect(ai).toContainText("₹55-₹90");
@@ -415,7 +419,7 @@ test("our fare and Gemini's suggestion sit side by side with rider progress", as
   await page.getByLabel("Fare you paid in rupees").fill("100");
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await expect(page.locator(".fare-vote.done")).toContainText(
-    "2 of 3 riders so far. The fare updates once 3 riders report it.",
+    "2 of 3 riders so far. The fare updates once 3 riders report it. Your report already nudged it to ₹68.",
   );
   await page.screenshot({ path: "test-results/fare-compare.png", fullPage: true });
 });

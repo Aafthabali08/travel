@@ -5,8 +5,10 @@ import json
 import os
 import time
 import uuid
+from datetime import datetime
 from functools import lru_cache
 from fastapi import HTTPException
+from .fares import IST
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -24,9 +26,19 @@ CREATE TABLE IF NOT EXISTS fare_votes (
     verdict varchar(8) NOT NULL CHECK (verdict IN ('correct', 'wrong')),
     created_at double precision NOT NULL,
     origin_cell varchar(16),
-    dest_cell varchar(16)
+    dest_cell varchar(16),
+    trip_km double precision,
+    trip_minutes double precision,
+    hour smallint
 )
 """
+VOTE_EXTRA_COLUMNS = {
+    "origin_cell": "varchar(16)",
+    "dest_cell": "varchar(16)",
+    "trip_km": "double precision",
+    "trip_minutes": "double precision",
+    "hour": "smallint",
+}
 GEMINI_FARES_DDL = """
 CREATE TABLE IF NOT EXISTS gemini_fares (
     cache_key varchar(120) PRIMARY KEY,
@@ -89,9 +101,9 @@ def init_schema():
     with engine.begin() as conn:
         conn.execute(text(FARE_VOTES_DDL))
         existing = {c["name"] for c in inspect(conn).get_columns("fare_votes")}
-        for column in ("origin_cell", "dest_cell"):
+        for column, kind in VOTE_EXTRA_COLUMNS.items():
             if column not in existing:
-                conn.execute(text(f"ALTER TABLE fare_votes ADD COLUMN {column} varchar(16)"))
+                conn.execute(text(f"ALTER TABLE fare_votes ADD COLUMN {column} {kind}"))
         conn.execute(text(FARE_VOTES_INDEX))
         conn.execute(text(GEMINI_FARES_DDL))
         if engine.dialect.name == "postgresql":
@@ -115,7 +127,7 @@ def fetch_votes():
         rows = conn.execute(
             text(
                 "SELECT voter_hash, kind, band, base_fare, shown_fare, paid_fare, verdict, created_at, "
-                "origin_cell, dest_cell FROM fare_votes WHERE created_at > :since"
+                "origin_cell, dest_cell, trip_km, trip_minutes, hour FROM fare_votes WHERE created_at > :since"
             ),
             {"since": time.time() - 365 * 86400},
         )
@@ -131,14 +143,23 @@ def fetch_votes():
                 "created_at": r[7],
                 "origin_cell": r[8],
                 "dest_cell": r[9],
+                "km": r[10],
+                "minutes": r[11],
+                "hour": r[12],
             }
             for r in rows
         ]
 
 
-def save_vote(voter, kind, band, base, shown, paid, verdict, origin_cell=None, dest_cell=None):
-    """One vote per rider, fare kind and distance band per 24 hours; a newer vote replaces it."""
-    now = time.time()
+def save_vote(voter, kind, band, base, shown, paid, verdict, origin_cell=None, dest_cell=None,
+              km=None, minutes=None, now=None):
+    """One vote per rider, fare kind and distance band per 24 hours; a newer vote replaces it.
+
+    Alongside the price it keeps what the model learns from: exact trip distance and duration,
+    the hour of day (India time) and the coarse start/end map cells, never exact coordinates.
+    """
+    now = now or time.time()
+    hour = datetime.fromtimestamp(now, IST).hour
     try:
         with database().begin() as conn:
             conn.execute(
@@ -151,8 +172,9 @@ def save_vote(voter, kind, band, base, shown, paid, verdict, origin_cell=None, d
             conn.execute(
                 text(
                     "INSERT INTO fare_votes (id, voter_hash, kind, band, base_fare, shown_fare, paid_fare, verdict, "
-                    "created_at, origin_cell, dest_cell) "
-                    "VALUES (:id, :voter, :kind, :band, :base, :shown, :paid, :verdict, :now, :origin_cell, :dest_cell)"
+                    "created_at, origin_cell, dest_cell, trip_km, trip_minutes, hour) "
+                    "VALUES (:id, :voter, :kind, :band, :base, :shown, :paid, :verdict, :now, :origin_cell, "
+                    ":dest_cell, :km, :minutes, :hour)"
                 ),
                 {
                     "id": str(uuid.uuid4()),
@@ -166,6 +188,9 @@ def save_vote(voter, kind, band, base, shown, paid, verdict, origin_cell=None, d
                     "now": now,
                     "origin_cell": origin_cell,
                     "dest_cell": dest_cell,
+                    "km": km,
+                    "minutes": minutes,
+                    "hour": hour,
                 },
             )
     except SQLAlchemyError as exc:

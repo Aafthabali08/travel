@@ -568,6 +568,10 @@ main {
   font-size: 11px;
   color: #8b967e;
 }
+.fare-side .fare-range {
+  color: var(--green);
+  font-weight: 600;
+}
 .fare-side .gemini-basis {
   color: var(--green);
   font-weight: 600;

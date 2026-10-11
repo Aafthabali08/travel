@@ -57,18 +57,23 @@ Provider documentation: [Routes](https://developers.google.com/maps/documentatio
 
 Fuel defaults: petrol ₹116.5/L, diesel ₹103.95/L, CNG ₹92.5/kg, electricity ₹10/kWh (Visakhapatnam, 2026). The **Stree Shakti** option in Journey preferences makes City Ordinary / Metro Express bus fares ₹0.
 
-Riders rate fares with **Correct** or **Wrong → What did you pay?**. `backend/app/fare_model.py` turns each vote into a ratio against the researched fare and learns a multiplier per fare kind and distance band (0–3, 3–7, 7–15, 15+ km):
+Riders rate fares with **Correct** or **Wrong → What did you pay?**. Every report is saved with the price paid, the fare shown, the exact trip distance and duration, the hour of day (India time) and the coarse start/end map cells (~1.6 km; never exact coordinates). `backend/app/fare_model.py` turns each report into `y = ln(paid ÷ researched fare)` and, per fare kind, learns three smooth corrections on top of the fare card (which already scales with distance and day/night):
 
-`fare = researched fare × exp(Σ w·ln(rider ÷ researched) ÷ (5 + Σ w))`
+`fare = researched fare × exp(distance + area + time)` (kept within 0.5-2×)
 
-- The prior weight of 5 keeps a few votes from swinging fares; at least 3 different riders are needed before a fare changes.
-- Votes halve in weight every 60 days, ratios outside 0.25–4× are ignored, and the multiplier is clamped to 0.5–2×.
-- One vote per rider (anonymous browser token, stored hashed), fare kind and band per 24 hours. Votes are only accepted for live routes the server itself returned in the last 30 minutes.
-- **Location and distance.** Fare cards already scale with distance, and the distance-band multiplier learns how riders' real fares differ at each trip length. On top of that, an **area** layer learns what riders pay around a trip's start and end, per ~1.6 km map cell (`fare = researched × band multiplier × area multiplier`). A report teaches both ends of its trip; a trip is predicted from the geometric mean of its two cells, and an unknown cell counts as neutral. Area is learned only from what the distance band doesn't already explain, needs at least 5 different riders in the cell (the band needs 3), uses a heavier prior of 8, and stays within 0.7-1.5× (the combined correction within 0.5-2×). Trips with no nearby reports keep the fare card. Votes store only the coarse cell ids, never exact coordinates; cells have hard edges, so a ride just across a boundary counts as a different area until enough riders report there.
-- Existing databases are upgraded automatically on startup (`origin_cell`/`dest_cell` columns are added to `fare_votes`; older votes keep counting toward the distance band).
-- `GET /api/fares` publishes the full model: rules, sources, every learned multiplier and every area that has enough riders to apply.
-- Every paid price carries an info icon: prices can differ with availability, holidays and weather, and the model (and Gemini's suggestion) can be inaccurate.
+- **Distance** is a kernel-smoothed curve over `ln(km)` (bandwidth 0.35), so a report at 3.8 km informs trips of roughly 2.5-5.5 km, there are no band edges, and a trip length nobody has reported keeps the fare card.
+- **Area** is what riders pay beyond the distance effect around the trip's start and end. Nearby cells share information (Gaussian kernel, 2 km), so a trip between places nobody reported still benefits from reports next door. It needs 5 different riders within ~2.4 km, uses a heavier prior of 8, stays within 0.7-1.5×, and applies half strength when only one end is known.
+- **Time of day** is how night / morning (6-11) / midday (11-16) / evening (16-22) differ from the average of all timed reports once distance and area are accounted for. It needs 5 riders in that period and stays within 0.8-1.3×; reports from a single period teach nothing.
+- Each term is a shrunk weighted mean (`Σ w·k·y ÷ (prior + Σ w·k)`), so a few reports barely move the fare, many consistent reports pull it toward what riders pay, and the prior of 5 keeps one noisy rider from swinging it. Reports halve in weight every 60 days, amounts outside 0.25-4× the fare card are ignored, and disputes without an amount don't count.
+- A fare is **rider-checked** once 3 different riders near that distance have reported. Before that each rider only **nudges** it (prior 3× heavier with one rider, 2× with two: about +4%, +12% for riders who say a fare is double, then +30% at three). Below three riders each rider counts once, so one person reporting on many days cannot stack up a bigger nudge. The leg says "nudged by N rider reports" and the vote reply says "Your report already nudged it to ₹X".
+- The model also learns how much riders disagree and shows "Riders usually pay ₹a-₹b" once 3 riders have confirmed a fare: the range widens when riders disagree and narrows as agreeing reports accumulate.
+- One vote per rider (anonymous browser token, stored hashed), fare kind and distance band per 24 hours. Votes are only accepted for live routes the server itself returned in the last 30 minutes.
+- Existing databases are upgraded automatically on startup (new columns `origin_cell`, `dest_cell`, `trip_km`, `trip_minutes`, `hour` are added to `fare_votes`; older reports keep counting, using their distance band's centre as their distance, and are ignored for area and time).
+- `GET /api/fares` publishes the full model: rules, sources, the learned distance curve per fare kind, every area with enough riders and every time-of-day effect.
+- Every paid price carries an info icon: prices can differ with availability, holidays and weather, and the model (and Gemini's suggestion) can be inaccurate. Weather and holidays are not modelled.
 - Without a database (or if it's unreachable) the app keeps working on researched fares; voting returns 503.
+
+**Does it learn?** `backend/tests/test_predictor.py` backtests it: riders pay according to a hidden pattern (longer trips relatively pricier, a railway-station premium, a cheaper suburb, pricier evenings) with noise and 5% absurd reports, and the model predicts 250 trips nobody reported. The fare card alone is off by about 25%; the model's error falls to about 20% with 3 riders, 12% with 10, 9% with 30, 7% with 100 and 6% by 300, and it is never worse than the card. It stays accurate with 20% careless reports, and reports from other places still help trips in places nobody has reported.
 
 ## Gemini fare suggestions
 
