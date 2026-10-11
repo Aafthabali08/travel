@@ -156,6 +156,12 @@ def test_cache_key_separates_areas_and_meaningfully_different_evidence():
     assert len(base) <= 120
 
 
+def test_changing_the_prompt_version_invalidates_cached_answers(monkeypatch):
+    before = gemini.cache_key("auto", 5, 15, False, context(evidence=seen()))
+    monkeypatch.setattr(gemini, "PROMPT_VERSION", gemini.PROMPT_VERSION + 1)
+    assert gemini.cache_key("auto", 5, 15, False, context(evidence=seen())) != before
+
+
 def test_cache_key_ignores_trivial_evidence_changes():
     one = gemini.cache_key("auto", 5, 15, False, context(evidence=seen(riders=3, median=150)))
     two = gemini.cache_key("auto", 5, 15, False, context(evidence=seen(riders=4, median=152)))

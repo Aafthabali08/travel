@@ -30,6 +30,8 @@ MAX_FARE = 5000
 TIMEOUT = 6
 DEADLINE = 10
 CONCURRENCY = 4
+# Bump whenever the prompt's wording changes, so answers cached from the old prompt are not reused.
+PROMPT_VERSION = 2
 
 logger = logging.getLogger("routewise")
 local_cache: dict[str, tuple[float, dict]] = {}
@@ -95,7 +97,7 @@ def cache_key(kind: str, km: float, minutes: float, night: bool, context: dict |
     evidence = context.get("evidence")
     seen = "none" if not evidence else f"{evidence['riders'] // 3}:{round(evidence['median'] / 10)}"
     plain = (
-        f"{round(km * 2) / 2:.1f}km|{5 * round(minutes / 5)}min|{'night' if night else 'day'}|"
+        f"v{PROMPT_VERSION}|{round(km * 2) / 2:.1f}km|{5 * round(minutes / 5)}min|{'night' if night else 'day'}|"
         f"{context.get('origin_cell') or '-'}>{context.get('dest_cell') or '-'}|{seen}"
     )
     return f"{model()}|{kind}|{hashlib.sha256(plain.encode()).hexdigest()[:32]}"
