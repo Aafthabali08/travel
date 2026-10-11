@@ -106,7 +106,47 @@ type VoteResult = {
   fare: number;
   voters: number;
   applied: boolean;
+  needed?: number;
+  message?: string;
 };
+function FareCompare({ leg }: { leg: Leg }) {
+  const needed = leg.fare_needed ?? 3;
+  const voters = leg.fare_voters ?? 0;
+  const gemini = leg.gemini_status;
+  return (
+    <div className={`fare-compare${gemini ? "" : " single"}`}>
+      <div className="fare-side">
+        <span className="fare-side-label">RouteWise fare</span>
+        <b>{money(leg.cost)}</b>
+        <small>
+          {leg.fare_applied
+            ? `Rider-checked by ${voters} riders`
+            : `${voters} of ${needed} riders so far`}
+        </small>
+      </div>
+      {gemini && (
+        <div className="fare-side gemini">
+          <span className="fare-side-label">
+            <Sparkles size={11} /> Gemini suggests
+          </span>
+          {gemini === "ok" && leg.gemini_fare != null ? (
+            <>
+              <b>{money(leg.gemini_fare)}</b>
+              <small>
+                Typical {money(leg.gemini_low ?? leg.gemini_fare)}-
+                {money(leg.gemini_high ?? leg.gemini_fare)} · AI estimate, not
+                verified
+              </small>
+              {leg.gemini_note && <small>{leg.gemini_note}</small>}
+            </>
+          ) : (
+            <small>Suggestion unavailable right now.</small>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 function FareVote({
   routeId,
   legIndex,
@@ -143,9 +183,10 @@ function FareVote({
     return (
       <p className="fare-vote done" role="status">
         <CheckCircle2 size={13} /> Thanks!{" "}
-        {result.applied
-          ? `This fare is now ₹${result.fare}, learned from ${result.voters} riders.`
-          : `${result.voters} of 3 riders so far. The fare updates once 3 riders report it.`}
+        {result.message?.replace(/^Thanks!\s*/, "") ??
+          (result.applied
+            ? `This fare is now ₹${result.fare}, learned from ${result.voters} riders.`
+            : `${result.voters} of ${result.needed ?? 3} riders so far. The fare updates once ${result.needed ?? 3} riders report it.`)}
       </p>
     );
   return (
@@ -1510,6 +1551,9 @@ export default function App() {
                           <span>{leg.source}</span>
                           <b>{leg.cost === 0 ? "Free" : money(leg.cost)}</b>
                         </div>
+                        {leg.fare_kind && leg.cost !== null && leg.cost > 0 && (
+                          <FareCompare leg={leg} />
+                        )}
                         {leg.fare_basis && (
                           <p className="fare-basis">{leg.fare_basis}</p>
                         )}

@@ -17,7 +17,8 @@ from .models import Search, GPS, Event, Vehicle, Point, FareVote
 from .engines import feasible, pareto, rank, navigation, fuel_cost
 from .provider import GoogleProvider
 from .fares import RULES, FUEL_PRICES, MILEAGE_PRESETS, MILEAGE_SOURCE, STREE_SHAKTI, estimate
-from .fare_model import FareModel, band, PRIOR_WEIGHT, MIN_VOTERS, HALF_LIFE_DAYS, CLAMP
+from .fare_model import FareModel, band, progress_message, PRIOR_WEIGHT, MIN_VOTERS, HALF_LIFE_DAYS, CLAMP
+from . import gemini
 from . import storage
 
 load_dotenv()
@@ -178,6 +179,7 @@ def config():
             os.getenv("GOOGLE_MAPS_API_KEY") and os.getenv("GOOGLE_MAPS_BROWSER_KEY")
         ),
         "browser_key": os.getenv("GOOGLE_MAPS_BROWSER_KEY", ""),
+        "gemini_ready": gemini.configured(),
         "city": "Visakhapatnam",
         "fuel_prices": FUEL_PRICES,
         "mileage_presets": MILEAGE_PRESETS,
@@ -191,6 +193,7 @@ def health():
     return {
         "status": "ok",
         "provider_configured": bool(os.getenv("GOOGLE_MAPS_API_KEY")),
+        "gemini_configured": gemini.configured(),
         "database": storage.database_status(),
     }
 
@@ -258,6 +261,8 @@ def price_route(route, query):
         stats = fare_model.get(leg.fare_kind, km)
         leg.cost = float(round(leg.base_fare * stats["multiplier"]))
         leg.fare_reports = stats["reports"]
+        leg.fare_voters = stats["voters"]
+        leg.fare_applied = stats["applied"]
         leg.fare_basis = (
             f"Rider-checked · {stats['voters']} riders"
             if stats["applied"]
@@ -322,6 +327,12 @@ async def route_search(query: Search):
     log("route.constraints.applied", before=len(routes), after=len(filtered))
     results = rank(pareto(filtered), query.preference)
     log("route.ranked", count=len(results), preference=query.preference)
+    has_db = bool(os.getenv("DATABASE_URL"))
+    await gemini.attach(
+        results,
+        storage.load_gemini_fare if has_db else None,
+        storage.save_gemini_fare if has_db else None,
+    )
     for route in results:
         cache[route.id] = (time.time() + 1800, route)
         log(
@@ -434,10 +445,13 @@ async def vote_fare(body: FareVote):
     await asyncio.to_thread(fare_model.refresh, True)
     stats = fare_model.get(leg.fare_kind, km)
     log("fare.voted", kind=leg.fare_kind, band=band(km), verdict=body.verdict)
+    fare = round(leg.base_fare * stats["multiplier"])
     return {
         "kind": leg.fare_kind,
         "band": band(km),
-        "fare": round(leg.base_fare * stats["multiplier"]),
+        "fare": fare,
+        "needed": MIN_VOTERS,
+        "message": progress_message(stats["voters"], stats["applied"], fare),
         **stats,
     }
 

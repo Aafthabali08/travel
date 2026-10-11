@@ -11,5 +11,7 @@ services:
         sync: false
       - key: GOOGLE_MAPS_BROWSER_KEY
         sync: false
+      - key: GEMINI_API_KEY
+        sync: false
       - key: DATABASE_URL
         sync: false

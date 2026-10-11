@@ -360,3 +360,83 @@ test("Google authentication failure shows a recoverable error", async ({ page })
   await page.getByRole("button", { name: "Dismiss error" }).click();
   await expect(page.getByRole("alert")).toHaveCount(0);
 });
+
+test("our fare and Gemini's suggestion sit side by side with rider progress", async ({
+  page,
+}) => {
+  const withGemini = {
+    ...autoRoute,
+    legs: [
+      {
+        ...autoRoute.legs[0],
+        fare_voters: 1,
+        fare_needed: 3,
+        fare_applied: false,
+        gemini_status: "ok",
+        gemini_fare: 70,
+        gemini_low: 55,
+        gemini_high: 90,
+        gemini_note: "Short city trip, daytime.",
+      },
+    ],
+  };
+  await mockLive(page, [withGemini]);
+  await page.route("**/api/fares/vote", (r) =>
+    r.fulfill({
+      json: {
+        fare: 64,
+        voters: 2,
+        reports: 2,
+        disputed: 0,
+        applied: false,
+        needed: 3,
+        message: "Thanks! 2 of 3 riders so far. The fare updates once 3 riders report it.",
+      },
+    }),
+  );
+  await page.goto("/");
+  await choosePlaces(page);
+  await page.getByRole("button", { name: "Find my routes" }).click();
+  const ours = page.locator(".fare-side").first();
+  const ai = page.locator(".fare-side.gemini");
+  await expect(ours).toContainText("RouteWise fare");
+  await expect(ours).toContainText("₹64");
+  await expect(ours).toContainText("1 of 3 riders so far");
+  await expect(ai).toContainText("Gemini suggests");
+  await expect(ai).toContainText("₹70");
+  await expect(ai).toContainText("₹55-₹90");
+  await expect(ai).toContainText("AI estimate, not verified");
+  const [left, right] = await Promise.all([ours.boundingBox(), ai.boundingBox()]);
+  expect(Math.abs(left!.y - right!.y)).toBeLessThan(2);
+  expect(right!.x).toBeGreaterThan(left!.x + left!.width - 1);
+  await page.getByRole("button", { name: "Wrong" }).click();
+  await page.getByLabel("Fare you paid in rupees").fill("100");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(page.locator(".fare-vote.done")).toContainText(
+    "2 of 3 riders so far. The fare updates once 3 riders report it.",
+  );
+  await page.screenshot({ path: "test-results/fare-compare.png", fullPage: true });
+});
+
+test("fare legs without a Gemini suggestion still show rider progress", async ({ page }) => {
+  await mockLive(page, [autoRoute]);
+  await page.goto("/");
+  await choosePlaces(page);
+  await page.getByRole("button", { name: "Find my routes" }).click();
+  await expect(page.locator(".fare-side")).toHaveCount(1);
+  await expect(page.locator(".fare-side").first()).toContainText("0 of 3 riders so far");
+  await expect(page.locator(".fare-side.gemini")).toHaveCount(0);
+});
+
+test("an unavailable Gemini suggestion is explained, not hidden or faked", async ({ page }) => {
+  const down = {
+    ...autoRoute,
+    legs: [{ ...autoRoute.legs[0], gemini_status: "unavailable", gemini_note: "Gemini could not be reached." }],
+  };
+  await mockLive(page, [down]);
+  await page.goto("/");
+  await choosePlaces(page);
+  await page.getByRole("button", { name: "Find my routes" }).click();
+  await expect(page.locator(".fare-side.gemini")).toContainText("Suggestion unavailable");
+  await expect(page.locator(".fare-side.gemini")).not.toContainText("₹");
+});

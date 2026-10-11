@@ -1,5 +1,6 @@
 from typing import Literal
 from pydantic import BaseModel, Field, model_validator
+from .fare_model import MIN_VOTERS
 
 Mode = Literal[
     "WALK", "BICYCLE", "BUS", "TRAIN", "METRO", "AUTO", "CAB", "BIKE", "CAR", "EV"
@@ -44,6 +45,14 @@ class Leg(BaseModel):
     base_fare: float | None = None
     fare_basis: str | None = None
     fare_reports: int = 0
+    fare_voters: int = 0
+    fare_needed: int = MIN_VOTERS
+    fare_applied: bool = False
+    gemini_status: Literal["ok", "unavailable"] | None = None
+    gemini_fare: float | None = None
+    gemini_low: float | None = None
+    gemini_high: float | None = None
+    gemini_note: str | None = None
 
 
 class Route(BaseModel):

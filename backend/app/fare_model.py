@@ -51,6 +51,15 @@ def learn(votes, now: float | None = None) -> dict:
     }
 
 
+def progress_message(voters: int, applied: bool, fare: float) -> str:
+    if applied:
+        return f"Thanks! This fare is now ₹{round(fare)}, learned from {voters} riders."
+    return (
+        f"Thanks! {voters} of {MIN_VOTERS} riders so far. "
+        f"The fare updates once {MIN_VOTERS} riders report it."
+    )
+
+
 class FareModel:
     def __init__(self, fetch_votes):
         self.fetch_votes = fetch_votes

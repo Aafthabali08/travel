@@ -67,6 +67,15 @@ Riders rate fares with **Correct** or **Wrong → What did you pay?**. `backend/
 - `GET /api/fares` publishes the full model: rules, sources and every learned multiplier.
 - Without a database (or if it's unreachable) the app keeps working on researched fares; voting returns 503.
 
+## Gemini fare suggestions
+
+Each priced leg (private auto, cab, share auto, bus) shows **RouteWise fare** and **Gemini suggests** side by side. Gemini's number is an independent AI estimate for Visakhapatnam, shown with a typical range and labelled "AI estimate, not verified". It never feeds the rider-report model and never changes the fare RouteWise charges to the total.
+
+- Set `GEMINI_API_KEY` (free key from [Google AI Studio](https://aistudio.google.com/apikey)) and optionally `GEMINI_MODEL` (default `gemini-2.5-flash`). Without a key the Gemini column is hidden and everything else works.
+- Suggestions are cached by fare kind, distance (0.5 km buckets), time (5 min buckets) and day/night for 7 days, in memory and in the `gemini_fares` table, so repeat searches don't spend quota. Identical legs in one search share one request.
+- If Gemini fails or times out (8 s), that leg shows "Suggestion unavailable right now"; the route and fare are unaffected. Replies that are unreadable, non-positive or above ₹5,000 are rejected.
+- Rider progress shows on every priced leg ("1 of 3 riders so far"). After a report, the server replies "Thanks! 1 of 3 riders so far. The fare updates once 3 riders report it." and, from the third distinct rider, the fare moves gradually as more riders report (see the model above).
+
 ## Deploy to Render (free)
 
 Render runs the Docker image (API + built frontend on one HTTPS origin, which also enables phone GPS). Votes live in Supabase Postgres, whose free database doesn't expire.
@@ -119,7 +128,7 @@ npm test
 npm run test:e2e
 ```
 
-The backend tests cover fuel/EV math, fare cards and the learning model, vote rules, validation, disconnected legs, budget/walking limits, unknown fares, scoring, Pareto filtering, GPS accuracy/deviation/cooldowns, and API errors, with Google mocked. Browser tests use mocked Live responses for the journey, sorting, maps hand-off, live tracking, fare voting, vehicle settings, search, GPS denial, API failures, and mobile overflow. Real Google responses, Supabase, and physical GPS navigation need their services and a device.
+The backend tests cover fuel/EV math, fare cards and the learning model, vote rules, Gemini parsing/caching/failure handling and the 1-of-3 rider progress, validation, disconnected legs, budget/walking limits, unknown fares, scoring, Pareto filtering, GPS accuracy/deviation/cooldowns, and API errors, with Google mocked. Browser tests use mocked Live responses for the journey, sorting, maps hand-off, live tracking, fare voting, Gemini side-by-side fares, vehicle settings, search, GPS denial, API failures, and mobile overflow. Real Google responses, Supabase, and physical GPS navigation need their services and a device.
 
 ## Source layout
 
@@ -132,6 +141,7 @@ The backend tests cover fuel/EV math, fare cards and the learning model, vote ru
 - `backend/app/main.py`: API, error handling, request IDs, rate limits, expiring sessions.
 - `backend/app/fares.py`: researched fare cards, fuel prices and mileage presets with sources.
 - `backend/app/fare_model.py`: the open fare-learning model.
+- `backend/app/gemini.py`: cached Gemini fare suggestions, validated and failure-tolerant.
 - `backend/app/storage.py`: PostgreSQL vehicle profiles and fare votes.
 - `render.yaml`: Render deployment blueprint.
 - `backend/database/schema.sql`: PostgreSQL and GTFS-compatible tables.

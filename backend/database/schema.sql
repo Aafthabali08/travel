@@ -23,6 +23,17 @@ CREATE TABLE IF NOT EXISTS fare_votes (
     created_at double precision NOT NULL
 );
 CREATE INDEX IF NOT EXISTS fare_votes_key_idx ON fare_votes (kind, band, created_at);
+-- Cached Gemini fare suggestions (AI estimates, never fed into the rider-report model).
+CREATE TABLE IF NOT EXISTS gemini_fares (
+    cache_key varchar(120) PRIMARY KEY,
+    kind varchar(20) NOT NULL,
+    fare double precision NOT NULL CHECK (fare > 0),
+    low_fare double precision NOT NULL,
+    high_fare double precision NOT NULL,
+    note text NOT NULL,
+    model varchar(60) NOT NULL,
+    created_at double precision NOT NULL
+);
 CREATE TABLE IF NOT EXISTS places (
     place_id text PRIMARY KEY,
     name text NOT NULL,

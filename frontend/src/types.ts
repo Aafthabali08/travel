@@ -34,6 +34,14 @@ export type Leg = {
   base_fare?: number | null;
   fare_basis?: string | null;
   fare_reports?: number;
+  fare_voters?: number;
+  fare_needed?: number;
+  fare_applied?: boolean;
+  gemini_status?: "ok" | "unavailable" | null;
+  gemini_fare?: number | null;
+  gemini_low?: number | null;
+  gemini_high?: number | null;
+  gemini_note?: string | null;
 };
 export type FuelPrice = {
   price: number;

@@ -25,6 +25,18 @@ CREATE TABLE IF NOT EXISTS fare_votes (
     created_at double precision NOT NULL
 )
 """
+GEMINI_FARES_DDL = """
+CREATE TABLE IF NOT EXISTS gemini_fares (
+    cache_key varchar(120) PRIMARY KEY,
+    kind varchar(20) NOT NULL,
+    fare double precision NOT NULL CHECK (fare > 0),
+    low_fare double precision NOT NULL,
+    high_fare double precision NOT NULL,
+    note text NOT NULL,
+    model varchar(60) NOT NULL,
+    created_at double precision NOT NULL
+)
+"""
 PROFILES_DDL = """
 CREATE TABLE IF NOT EXISTS user_vehicle_profiles (
     id uuid PRIMARY KEY,
@@ -75,6 +87,7 @@ def init_schema():
     with engine.begin() as conn:
         conn.execute(text(FARE_VOTES_DDL))
         conn.execute(text(FARE_VOTES_INDEX))
+        conn.execute(text(GEMINI_FARES_DDL))
         if engine.dialect.name == "postgresql":
             conn.execute(text(PROFILES_DDL))
     return True
@@ -148,6 +161,47 @@ def save_vote(voter, kind, band, base, shown, paid, verdict):
         raise HTTPException(
             503, "Fare votes can't be saved right now. The database is unavailable."
         ) from exc
+
+
+def load_gemini_fare(key, since):
+    with database().connect() as conn:
+        row = conn.execute(
+            text(
+                "SELECT fare, low_fare, high_fare, note, model FROM gemini_fares "
+                "WHERE cache_key=:key AND created_at > :since"
+            ),
+            {"key": key, "since": since},
+        ).first()
+    if not row:
+        return None
+    return {
+        "fare": round(row[0]),
+        "low": round(row[1]),
+        "high": round(row[2]),
+        "note": row[3],
+        "model": row[4],
+    }
+
+
+def save_gemini_fare(key, kind, result):
+    with database().begin() as conn:
+        conn.execute(text("DELETE FROM gemini_fares WHERE cache_key=:key"), {"key": key})
+        conn.execute(
+            text(
+                "INSERT INTO gemini_fares (cache_key, kind, fare, low_fare, high_fare, note, model, created_at) "
+                "VALUES (:key, :kind, :fare, :low, :high, :note, :model, :now)"
+            ),
+            {
+                "key": key,
+                "kind": kind,
+                "fare": result["fare"],
+                "low": result["low"],
+                "high": result["high"],
+                "note": result["note"],
+                "model": result["model"],
+                "now": time.time(),
+            },
+        )
 
 
 def profiles(token, profile=None):
