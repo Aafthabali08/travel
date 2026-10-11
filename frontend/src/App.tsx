@@ -109,6 +109,56 @@ type VoteResult = {
   needed?: number;
   message?: string;
 };
+const PRICE_NOTE =
+  "Prices are estimates. They can differ with driver and vehicle availability, holidays and festivals, and weather. Our model and Gemini's suggestion can also be inaccurate at times.";
+function PriceNote({
+  passive = false,
+  align = "left",
+}: {
+  passive?: boolean;
+  align?: "left" | "right";
+}) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: Event) => {
+      if (!wrap.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [open]);
+  if (passive)
+    return (
+      <span
+        className="price-note passive"
+        role="img"
+        aria-label={PRICE_NOTE}
+        title={PRICE_NOTE}
+      >
+        <Info size={12} />
+      </span>
+    );
+  return (
+    <span className="price-note-wrap" ref={wrap}>
+      <button
+        type="button"
+        className="price-note"
+        aria-label="About this price"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        onKeyDown={(e) => e.key === "Escape" && setOpen(false)}
+      >
+        <Info size={12} />
+      </button>
+      {open && (
+        <span role="note" className={`price-note-pop ${align}`}>
+          {PRICE_NOTE}
+        </span>
+      )}
+    </span>
+  );
+}
 function FareCompare({ leg }: { leg: Leg }) {
   const needed = leg.fare_needed ?? 3;
   const voters = leg.fare_voters ?? 0;
@@ -117,7 +167,10 @@ function FareCompare({ leg }: { leg: Leg }) {
     <div className={`fare-compare${gemini ? "" : " single"}`}>
       <div className="fare-side">
         <span className="fare-side-label">RouteWise fare</span>
-        <b>{money(leg.cost)}</b>
+        <b>
+          {money(leg.cost)}
+          <PriceNote />
+        </b>
         <small>
           {leg.fare_applied
             ? `Rider-checked by ${voters} riders`
@@ -131,7 +184,10 @@ function FareCompare({ leg }: { leg: Leg }) {
           </span>
           {gemini === "ok" && leg.gemini_fare != null ? (
             <>
-              <b>{money(leg.gemini_fare)}</b>
+              <b>
+                {money(leg.gemini_fare)}
+                <PriceNote align="right" />
+              </b>
               <small>
                 Typical {money(leg.gemini_low ?? leg.gemini_fare)}-
                 {money(leg.gemini_high ?? leg.gemini_fare)} · AI estimate, not
@@ -1477,6 +1533,7 @@ export default function App() {
                     </div>
                     <strong>
                       {money(r.cost)}
+                      {r.cost !== null && r.cost > 0 && <PriceNote passive />}
                       {r.cost !== null && (
                         <small>{r.cost_label}</small>
                       )}
@@ -1505,6 +1562,9 @@ export default function App() {
                   </div>
                   <span className="detail-total">
                     {money(selected.cost)}
+                    {selected.cost !== null && selected.cost > 0 && (
+                      <PriceNote align="right" />
+                    )}
                     <small>
                       total estimate
                     </small>
@@ -1549,7 +1609,12 @@ export default function App() {
                         </p>
                         <div className="leg-meta">
                           <span>{leg.source}</span>
-                          <b>{leg.cost === 0 ? "Free" : money(leg.cost)}</b>
+                          <b>
+                            {leg.cost === 0 ? "Free" : money(leg.cost)}
+                            {leg.cost !== null && leg.cost > 0 && (
+                              <PriceNote align="right" />
+                            )}
+                          </b>
                         </div>
                         {leg.fare_kind && leg.cost !== null && leg.cost > 0 && (
                           <FareCompare leg={leg} />

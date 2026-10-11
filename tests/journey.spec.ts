@@ -440,3 +440,64 @@ test("an unavailable Gemini suggestion is explained, not hidden or faked", async
   await expect(page.locator(".fare-side.gemini")).toContainText("Suggestion unavailable");
   await expect(page.locator(".fare-side.gemini")).not.toContainText("₹");
 });
+
+test("every paid price carries a note about availability, holidays, weather and accuracy", async ({
+  page,
+}) => {
+  await mockLive(page, [autoRoute, walkRoute]);
+  await page.goto("/");
+  await choosePlaces(page);
+  await page.getByRole("button", { name: "Find my routes" }).click();
+  await page.getByRole("button", { name: "Cheapest", exact: true }).click();
+  const cards = page.locator(".route-card");
+  await expect(cards).toHaveCount(2);
+  await expect(cards.nth(0).locator(".price-note")).toHaveCount(0);
+  const cardNote = cards.nth(1).locator(".price-note.passive");
+  await expect(cardNote).toHaveAttribute("title", /availability.*holidays.*weather.*inaccurate/i);
+
+  await cards.nth(1).click();
+  const total = page.locator(".detail-total");
+  await expect(total.locator(".price-note")).toHaveAttribute("aria-label", "About this price");
+  await total.locator(".price-note").click();
+  const pop = page.locator(".price-note-pop");
+  await expect(pop).toHaveCount(1);
+  for (const word of ["availability", "holidays", "weather", "inaccurate"])
+    await expect(pop).toContainText(word);
+  await page.keyboard.press("Escape");
+  await expect(pop).toHaveCount(0);
+
+  await page.locator(".leg-meta .price-note").click();
+  await expect(pop).toBeVisible();
+  await page.getByRole("heading", { level: 3 }).first().click();
+  await expect(pop).toHaveCount(0);
+  await page.locator(".fare-side .price-note").first().click();
+  await expect(pop).toBeVisible();
+  await page.screenshot({ path: "test-results/price-note.png", fullPage: true });
+});
+
+test("a walking-only route shows no price note", async ({ page }) => {
+  await mockLive(page, [walkRoute]);
+  await page.goto("/");
+  await choosePlaces(page);
+  await page.getByRole("button", { name: "Find my routes" }).click();
+  await expect(page.locator(".route-card")).toHaveCount(1);
+  await expect(page.locator(".price-note")).toHaveCount(0);
+});
+
+test("the price note stays on screen on a phone", async ({ page }) => {
+  await mockLive(page, [autoRoute]);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await choosePlaces(page);
+  await page.getByRole("button", { name: "Find my routes" }).click();
+  for (const trigger of [".detail-total .price-note", ".leg-meta .price-note", ".fare-side .price-note"]) {
+    await page.locator(trigger).first().click();
+    const box = await page.locator(".price-note-pop").boundingBox();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+    await page.keyboard.press("Escape");
+  }
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+  ).toBe(true);
+});

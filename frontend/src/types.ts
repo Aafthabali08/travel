@@ -37,6 +37,8 @@ export type Leg = {
   fare_voters?: number;
   fare_needed?: number;
   fare_applied?: boolean;
+  fare_area_adjusted?: boolean;
+  fare_area_riders?: number;
   gemini_status?: "ok" | "unavailable" | null;
   gemini_fare?: number | null;
   gemini_low?: number | null;

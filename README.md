@@ -64,7 +64,10 @@ Riders rate fares with **Correct** or **Wrong → What did you pay?**. `backend/
 - The prior weight of 5 keeps a few votes from swinging fares; at least 3 different riders are needed before a fare changes.
 - Votes halve in weight every 60 days, ratios outside 0.25–4× are ignored, and the multiplier is clamped to 0.5–2×.
 - One vote per rider (anonymous browser token, stored hashed), fare kind and band per 24 hours. Votes are only accepted for live routes the server itself returned in the last 30 minutes.
-- `GET /api/fares` publishes the full model: rules, sources and every learned multiplier.
+- **Location and distance.** Fare cards already scale with distance, and the distance-band multiplier learns how riders' real fares differ at each trip length. On top of that, an **area** layer learns what riders pay around a trip's start and end, per ~1.6 km map cell (`fare = researched × band multiplier × area multiplier`). A report teaches both ends of its trip; a trip is predicted from the geometric mean of its two cells, and an unknown cell counts as neutral. Area is learned only from what the distance band doesn't already explain, needs at least 5 different riders in the cell (the band needs 3), uses a heavier prior of 8, and stays within 0.7-1.5× (the combined correction within 0.5-2×). Trips with no nearby reports keep the fare card. Votes store only the coarse cell ids, never exact coordinates; cells have hard edges, so a ride just across a boundary counts as a different area until enough riders report there.
+- Existing databases are upgraded automatically on startup (`origin_cell`/`dest_cell` columns are added to `fare_votes`; older votes keep counting toward the distance band).
+- `GET /api/fares` publishes the full model: rules, sources, every learned multiplier and every area that has enough riders to apply.
+- Every paid price carries an info icon: prices can differ with availability, holidays and weather, and the model (and Gemini's suggestion) can be inaccurate.
 - Without a database (or if it's unreachable) the app keeps working on researched fares; voting returns 503.
 
 ## Gemini fare suggestions
@@ -128,7 +131,7 @@ npm test
 npm run test:e2e
 ```
 
-The backend tests cover fuel/EV math, fare cards and the learning model, vote rules, Gemini parsing/caching/failure handling and the 1-of-3 rider progress, validation, disconnected legs, budget/walking limits, unknown fares, scoring, Pareto filtering, GPS accuracy/deviation/cooldowns, and API errors, with Google mocked. Browser tests use mocked Live responses for the journey, sorting, maps hand-off, live tracking, fare voting, Gemini side-by-side fares, vehicle settings, search, GPS denial, API failures, and mobile overflow. Real Google responses, Supabase, and physical GPS navigation need their services and a device.
+The backend tests cover fuel/EV math, fare cards and the learning model, vote rules, Gemini parsing/caching/failure handling, the 1-of-3 rider progress, the area-learning model and the database migration, validation, disconnected legs, budget/walking limits, unknown fares, scoring, Pareto filtering, GPS accuracy/deviation/cooldowns, and API errors, with Google mocked. Browser tests use mocked Live responses for the journey, sorting, maps hand-off, live tracking, fare voting, Gemini side-by-side fares, the price note, vehicle settings, search, GPS denial, API failures, and mobile overflow. Real Google responses, Supabase, and physical GPS navigation need their services and a device.
 
 ## Source layout
 

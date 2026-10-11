@@ -7,7 +7,7 @@ import time
 import uuid
 from functools import lru_cache
 from fastapi import HTTPException
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import SQLAlchemyError
 
 VOTE_WINDOW = 86400
@@ -22,7 +22,9 @@ CREATE TABLE IF NOT EXISTS fare_votes (
     shown_fare double precision NOT NULL CHECK (shown_fare >= 0),
     paid_fare double precision CHECK (paid_fare >= 0),
     verdict varchar(8) NOT NULL CHECK (verdict IN ('correct', 'wrong')),
-    created_at double precision NOT NULL
+    created_at double precision NOT NULL,
+    origin_cell varchar(16),
+    dest_cell varchar(16)
 )
 """
 GEMINI_FARES_DDL = """
@@ -86,6 +88,10 @@ def init_schema():
     engine = database()
     with engine.begin() as conn:
         conn.execute(text(FARE_VOTES_DDL))
+        existing = {c["name"] for c in inspect(conn).get_columns("fare_votes")}
+        for column in ("origin_cell", "dest_cell"):
+            if column not in existing:
+                conn.execute(text(f"ALTER TABLE fare_votes ADD COLUMN {column} varchar(16)"))
         conn.execute(text(FARE_VOTES_INDEX))
         conn.execute(text(GEMINI_FARES_DDL))
         if engine.dialect.name == "postgresql":
@@ -108,8 +114,8 @@ def fetch_votes():
     with database().connect() as conn:
         rows = conn.execute(
             text(
-                "SELECT voter_hash, kind, band, base_fare, shown_fare, paid_fare, verdict, created_at "
-                "FROM fare_votes WHERE created_at > :since"
+                "SELECT voter_hash, kind, band, base_fare, shown_fare, paid_fare, verdict, created_at, "
+                "origin_cell, dest_cell FROM fare_votes WHERE created_at > :since"
             ),
             {"since": time.time() - 365 * 86400},
         )
@@ -123,12 +129,14 @@ def fetch_votes():
                 "paid": r[5],
                 "verdict": r[6],
                 "created_at": r[7],
+                "origin_cell": r[8],
+                "dest_cell": r[9],
             }
             for r in rows
         ]
 
 
-def save_vote(voter, kind, band, base, shown, paid, verdict):
+def save_vote(voter, kind, band, base, shown, paid, verdict, origin_cell=None, dest_cell=None):
     """One vote per rider, fare kind and distance band per 24 hours; a newer vote replaces it."""
     now = time.time()
     try:
@@ -142,8 +150,9 @@ def save_vote(voter, kind, band, base, shown, paid, verdict):
             )
             conn.execute(
                 text(
-                    "INSERT INTO fare_votes (id, voter_hash, kind, band, base_fare, shown_fare, paid_fare, verdict, created_at) "
-                    "VALUES (:id, :voter, :kind, :band, :base, :shown, :paid, :verdict, :now)"
+                    "INSERT INTO fare_votes (id, voter_hash, kind, band, base_fare, shown_fare, paid_fare, verdict, "
+                    "created_at, origin_cell, dest_cell) "
+                    "VALUES (:id, :voter, :kind, :band, :base, :shown, :paid, :verdict, :now, :origin_cell, :dest_cell)"
                 ),
                 {
                     "id": str(uuid.uuid4()),
@@ -155,6 +164,8 @@ def save_vote(voter, kind, band, base, shown, paid, verdict):
                     "paid": paid,
                     "verdict": verdict,
                     "now": now,
+                    "origin_cell": origin_cell,
+                    "dest_cell": dest_cell,
                 },
             )
     except SQLAlchemyError as exc:

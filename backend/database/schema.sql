@@ -20,7 +20,10 @@ CREATE TABLE IF NOT EXISTS fare_votes (
     shown_fare double precision NOT NULL CHECK (shown_fare >= 0),
     paid_fare double precision CHECK (paid_fare >= 0),
     verdict varchar(8) NOT NULL CHECK (verdict IN ('correct', 'wrong')),
-    created_at double precision NOT NULL
+    created_at double precision NOT NULL,
+    -- Coarse (~1.6 km) map cells of the trip's ends, never exact coordinates.
+    origin_cell varchar(16),
+    dest_cell varchar(16)
 );
 CREATE INDEX IF NOT EXISTS fare_votes_key_idx ON fare_votes (kind, band, created_at);
 -- Cached Gemini fare suggestions (AI estimates, never fed into the rider-report model).

@@ -17,7 +17,10 @@ from .models import Search, GPS, Event, Vehicle, Point, FareVote
 from .engines import feasible, pareto, rank, navigation, fuel_cost
 from .provider import GoogleProvider
 from .fares import RULES, FUEL_PRICES, MILEAGE_PRESETS, MILEAGE_SOURCE, STREE_SHAKTI, estimate
-from .fare_model import FareModel, band, progress_message, PRIOR_WEIGHT, MIN_VOTERS, HALF_LIFE_DAYS, CLAMP
+from .fare_model import (
+    FareModel, band, cell, progress_message, PRIOR_WEIGHT, MIN_VOTERS, HALF_LIFE_DAYS, CLAMP,
+    CELL_DEGREES, ZONE_PRIOR_WEIGHT, MIN_ZONE_VOTERS, ZONE_CLAMP,
+)
 from . import gemini
 from . import storage
 
@@ -247,6 +250,10 @@ def current_location():
     }
 
 
+def leg_cells(leg):
+    return cell(leg.origin.lat, leg.origin.lng), cell(leg.destination.lat, leg.destination.lng)
+
+
 def price_route(route, query):
     for leg in route.legs:
         if not leg.fare_kind:
@@ -258,16 +265,20 @@ def price_route(route, query):
             leg.cost = 0
             leg.fare_basis = "Stree Shakti free travel (City Ordinary and Metro Express)"
             continue
-        stats = fare_model.get(leg.fare_kind, km)
+        stats = fare_model.get(leg.fare_kind, km, *leg_cells(leg))
         leg.cost = float(round(leg.base_fare * stats["multiplier"]))
         leg.fare_reports = stats["reports"]
         leg.fare_voters = stats["voters"]
         leg.fare_applied = stats["applied"]
+        leg.fare_area_adjusted = stats["area_applied"]
+        leg.fare_area_riders = stats["area_riders"]
         leg.fare_basis = (
             f"Rider-checked · {stats['voters']} riders"
             if stats["applied"]
             else f"Estimate · {rule['source']} (checked {rule['checked']})"
         )
+        if stats["area_applied"]:
+            leg.fare_basis += f" · adjusted for this area ({stats['area_riders']} riders nearby)"
     if any(l.fare_kind for l in route.legs):
         costs = [l.cost for l in route.legs]
         route.cost = (
@@ -402,11 +413,23 @@ async def fares():
             "min_riders": MIN_VOTERS,
             "half_life_days": HALF_LIFE_DAYS,
             "clamp": CLAMP,
+            "area": {
+                "cell_degrees": CELL_DEGREES,
+                "cell_size_km": 1.6,
+                "prior_weight": ZONE_PRIOR_WEIGHT,
+                "min_riders": MIN_ZONE_VOTERS,
+                "clamp": ZONE_CLAMP,
+            },
         },
         "rules": RULES,
         "learned": [
             {"kind": kind, "band": b, **stats}
             for (kind, b), stats in sorted(fare_model.stats.items())
+        ],
+        "learned_areas": [
+            {"kind": kind, "cell": c, **stats}
+            for (kind, c), stats in sorted(fare_model.zones.items())
+            if stats["applied"]
         ],
         "votes_database": "connected" if fare_model.available else "unavailable",
         "stree_shakti": STREE_SHAKTI,
@@ -432,6 +455,7 @@ async def vote_fare(body: FareVote):
     if not os.getenv("DATABASE_URL"):
         raise HTTPException(503, "Fare voting needs a database. Set DATABASE_URL.")
     km = leg.distance / 1000
+    origin_cell, dest_cell = leg_cells(leg)
     await asyncio.to_thread(
         storage.save_vote,
         body.voter,
@@ -441,9 +465,11 @@ async def vote_fare(body: FareVote):
         leg.cost,
         body.paid if body.verdict == "wrong" else None,
         body.verdict,
+        origin_cell,
+        dest_cell,
     )
     await asyncio.to_thread(fare_model.refresh, True)
-    stats = fare_model.get(leg.fare_kind, km)
+    stats = fare_model.get(leg.fare_kind, km, origin_cell, dest_cell)
     log("fare.voted", kind=leg.fare_kind, band=band(km), verdict=body.verdict)
     fare = round(leg.base_fare * stats["multiplier"])
     return {
