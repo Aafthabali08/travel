@@ -8,5 +8,7 @@ def isolate_gemini(monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
     gemini.local_cache.clear()
+    gemini.unavailable.clear()
     yield
     gemini.local_cache.clear()
+    gemini.unavailable.clear()

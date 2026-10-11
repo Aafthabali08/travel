@@ -6,7 +6,7 @@ services:
       GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
       GOOGLE_MAPS_BROWSER_KEY: ${GOOGLE_MAPS_BROWSER_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      GEMINI_MODEL: ${GEMINI_MODEL:-}
       DATABASE_URL: postgresql+psycopg://routewise:routewise@db:5432/routewise
     depends_on:
       db:

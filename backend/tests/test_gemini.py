@@ -141,10 +141,10 @@ def test_request_sends_key_in_header_not_url(monkeypatch, calls):
     sent = calls[0]
     assert sent.headers["x-goog-api-key"] == SECRET
     assert SECRET not in str(sent.url)
-    assert "gemini-2.5-flash" in str(sent.url)
+    assert gemini.DEFAULT_MODELS[0] in str(sent.url)
     body = json.loads(sent.content)
     assert body["generationConfig"]["responseMimeType"] == "application/json"
-    assert result["fare"] == 80 and result["model"] == "gemini-2.5-flash"
+    assert result["fare"] == 80 and result["model"] == gemini.DEFAULT_MODELS[0]
 
 
 @pytest.mark.parametrize("status", [400, 403, 429, 500])
@@ -154,6 +154,62 @@ def test_request_http_errors_become_safe_messages(monkeypatch, configured, statu
         asyncio.run(gemini.request("auto", 5, 15, False))
     assert f"HTTP {status}" in str(caught.value)
     assert SECRET not in str(caught.value)
+
+
+def models_in(sent):
+    return [str(r.url).split("/models/")[1].split(":")[0] for r in sent]
+
+
+def test_missing_model_falls_back_and_is_remembered(monkeypatch, configured):
+    sent = []
+
+    def handler(request):
+        sent.append(request)
+        if gemini.DEFAULT_MODELS[0] in str(request.url):
+            return httpx.Response(404, json={"error": "model not found"})
+        return httpx.Response(200, json=reply())
+
+    serve(monkeypatch, handler)
+    result = asyncio.run(gemini.request("auto", 5, 15, False))
+    assert result["model"] == gemini.DEFAULT_MODELS[1]
+    assert models_in(sent) == list(gemini.DEFAULT_MODELS[:2])
+    asyncio.run(gemini.request("cab", 5, 15, False))
+    assert models_in(sent)[2:] == [gemini.DEFAULT_MODELS[1]]
+
+
+def test_configured_model_is_tried_first_then_defaults(monkeypatch, configured):
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-2.5-flash")
+    sent = []
+
+    def handler(request):
+        sent.append(request)
+        if "gemini-2.5-flash" in str(request.url):
+            return httpx.Response(404, json={})
+        return httpx.Response(200, json=reply())
+
+    serve(monkeypatch, handler)
+    assert asyncio.run(gemini.request("auto", 5, 15, False))["model"] == gemini.DEFAULT_MODELS[0]
+    assert models_in(sent)[0] == "gemini-2.5-flash"
+
+
+def test_no_usable_model_says_how_to_fix_it(monkeypatch, configured):
+    serve(monkeypatch, lambda r: httpx.Response(404, json={}))
+    with pytest.raises(gemini.GeminiError, match="GEMINI_MODEL") as caught:
+        asyncio.run(gemini.request("auto", 5, 15, False))
+    assert all(m in str(caught.value) for m in gemini.DEFAULT_MODELS)
+
+
+def test_only_a_missing_model_triggers_fallback(monkeypatch, configured):
+    sent = []
+
+    def handler(request):
+        sent.append(request)
+        return httpx.Response(403, json={})
+
+    serve(monkeypatch, handler)
+    with pytest.raises(gemini.GeminiError, match="HTTP 403"):
+        asyncio.run(gemini.request("auto", 5, 15, False))
+    assert len(sent) == 1 and gemini.unavailable == set()
 
 
 def test_request_handles_network_failure_and_garbage(monkeypatch, configured):

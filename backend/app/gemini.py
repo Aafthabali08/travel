@@ -17,7 +17,10 @@ import httpx
 from .fares import is_night
 
 ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-DEFAULT_MODEL = "gemini-2.5-flash"
+# Tried in order. Google retires older Flash models for new keys (a 404), so the app falls
+# back to the next one and remembers which models answered "not found".
+DEFAULT_MODELS = ("gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite")
+unavailable: set[str] = set()
 CACHE_SECONDS = 7 * 86400
 MAX_FARE = 5000
 TIMEOUT = 8
@@ -47,13 +50,24 @@ SCHEMA = {
 class GeminiError(Exception):
     """A suggestion could not be produced; the message is safe to show riders."""
 
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
+
 
 def configured() -> bool:
     return bool(os.getenv("GEMINI_API_KEY"))
 
 
+def candidates() -> list[str]:
+    """GEMINI_MODEL first (if set), then the defaults, skipping models Google said don't exist."""
+    order = [m for m in (os.getenv("GEMINI_MODEL"), *DEFAULT_MODELS) if m]
+    usable = [m for i, m in enumerate(order) if m not in order[:i] and m not in unavailable]
+    return usable or list(DEFAULT_MODELS)
+
+
 def model() -> str:
-    return os.getenv("GEMINI_MODEL") or DEFAULT_MODEL
+    return candidates()[0]
 
 
 def cache_key(kind: str, km: float, minutes: float, night: bool) -> str:
@@ -94,33 +108,48 @@ def parse(payload: dict) -> dict:
     }
 
 
-async def request(kind: str, km: float, minutes: float, night: bool) -> dict:
+async def call(name: str, kind: str, km: float, minutes: float, night: bool) -> dict:
     body = {
         "contents": [{"parts": [{"text": prompt(kind, km, minutes, night)}]}],
         "generationConfig": {
             "responseMimeType": "application/json",
             "responseSchema": SCHEMA,
-            "temperature": 0.2,
-            "maxOutputTokens": 1024,
+            "maxOutputTokens": 2048,
         },
     }
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT) as client:
             response = await client.post(
-                ENDPOINT.format(model=model()),
+                ENDPOINT.format(model=name),
                 json=body,
                 headers={"x-goog-api-key": os.getenv("GEMINI_API_KEY", "")},
             )
             response.raise_for_status()
-            return {**parse(response.json()), "model": model()}
+            return {**parse(response.json()), "model": name}
     except httpx.HTTPStatusError as exc:
-        raise GeminiError(
-            f"Gemini rejected the request (HTTP {exc.response.status_code})."
-        ) from exc
+        status = exc.response.status_code
+        raise GeminiError(f"Gemini rejected the request (HTTP {status}).", status) from exc
     except httpx.HTTPError as exc:
         raise GeminiError("Gemini could not be reached.") from exc
     except ValueError as exc:
         raise GeminiError("Gemini returned an unreadable response.") from exc
+
+
+async def request(kind: str, km: float, minutes: float, night: bool) -> dict:
+    tried = []
+    for name in candidates():
+        try:
+            return await call(name, kind, km, minutes, night)
+        except GeminiError as exc:
+            if exc.status != 404:
+                raise
+            unavailable.add(name)
+            tried.append(name)
+            warn("gemini.model_not_found", model=name)
+    raise GeminiError(
+        f"No Gemini model was found for this key (tried {', '.join(tried)}). "
+        "Set GEMINI_MODEL to a model your key can use."
+    )
 
 
 def warn(event: str, **data):
