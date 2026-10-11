@@ -1,5 +1,5 @@
 import pytest
-from backend.app import gemini
+from backend.app import gemini, main
 
 
 @pytest.fixture(autouse=True)
@@ -9,6 +9,8 @@ def isolate_gemini(monkeypatch):
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
     gemini.local_cache.clear()
     gemini.unavailable.clear()
+    monkeypatch.setattr(main, "ROUTE_CACHE_SECONDS", 0)
+    main.route_cache.clear()
     yield
     gemini.local_cache.clear()
     gemini.unavailable.clear()

@@ -91,3 +91,57 @@ def test_provider_reports_referrer_restriction_without_key(monkeypatch):
     assert "API_KEY_HTTP_REFERRER_BLOCKED" in caught.value.detail
     assert "private-test-key" not in caught.value.detail
     assert "separate server key" in caught.value.detail
+
+
+def _google_error(monkeypatch, status, error):
+    import httpx
+
+    monkeypatch.setenv("GOOGLE_MAPS_API_KEY", "private-test-key")
+
+    async def request(client, method, url, **kwargs):
+        return httpx.Response(status, request=httpx.Request(method, url), json={"error": error})
+
+    monkeypatch.setattr(httpx.AsyncClient, "request", request)
+
+
+def test_daily_quota_exhaustion_is_explained_with_the_limit(monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+
+    _google_error(monkeypatch, 429, {
+        "code": 429,
+        "status": "RESOURCE_EXHAUSTED",
+        "message": "Quota exceeded for private-test-key",
+        "details": [
+            {"reason": "RATE_LIMIT_EXCEEDED", "metadata": {
+                "quota_limit": "ComputeRoutesRequestsPerDay", "quota_limit_value": "100", "quota_unit": "1/d/{project}"}},
+            {"links": [{"url": "https://cloud.google.com/docs/quotas/help/request_increase"}]},
+        ],
+    })
+    with pytest.raises(HTTPException) as caught:
+        asyncio.run(GoogleProvider().search("test place"))
+    detail = caught.value.detail
+    assert "HTTP 429" in detail and "quota is used up" in detail and "resets daily" in detail
+    assert "Limit: 100 requests a day." in detail and "Quotas" in detail
+    assert "private-test-key" not in detail
+
+
+def test_a_per_minute_rate_limit_is_also_reported_as_quota(monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+
+    _google_error(monkeypatch, 429, {"status": "RESOURCE_EXHAUSTED", "details": [
+        {"reason": "RATE_LIMIT_EXCEEDED", "metadata": {"quota_limit_value": "600", "quota_unit": "1/min/{project}"}}]})
+    with pytest.raises(HTTPException) as caught:
+        asyncio.run(GoogleProvider().search("test place"))
+    assert "quota is used up" in caught.value.detail and "Limit: 600 requests per period." in caught.value.detail
+
+
+def test_an_unrecognised_429_still_gives_the_generic_advice(monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+
+    _google_error(monkeypatch, 429, {"message": "slow down"})
+    with pytest.raises(HTTPException) as caught:
+        asyncio.run(GoogleProvider().search("test place"))
+    assert "HTTP 429" in caught.value.detail and "Check Google API access" in caught.value.detail

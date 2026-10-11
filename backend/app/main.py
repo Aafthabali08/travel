@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -75,14 +76,41 @@ requests = defaultdict(deque)
 # Route/session memory expires; precise location trails are never persisted.
 cache = {}
 sessions = {}
+# Google's route calls are the scarce, billed resource (new projects can be capped at 100 a day),
+# so identical searches reuse the provider's answer for a few minutes. Prices, rider fares and
+# Gemini are recomputed on every search; only the provider's route geometry/times are reused.
+ROUTE_CACHE_SECONDS = 600
+route_cache = {}
 
 
 def prune():
     now = time.time()
-    for mapping in (cache, sessions):
+    for mapping in (cache, sessions, route_cache):
         for key in list(mapping):
             if mapping[key][0] < now:
                 del mapping[key]
+
+
+async def cached_routes(kind, query, fetch):
+    """The provider's routes for this trip, reused for ROUTE_CACHE_SECONDS. Failures are never cached."""
+    if ROUTE_CACHE_SECONDS <= 0:
+        return await fetch()
+    trip = {
+        "origin": query.origin.model_dump(include={"id", "lat", "lng"}),
+        "destination": query.destination.model_dump(include={"id", "lat", "lng"}),
+        "vehicle": query.vehicle.model_dump(),
+    }
+    key = kind + ":" + hashlib.sha256(json.dumps(trip, sort_keys=True).encode()).hexdigest()
+    now = time.time()
+    hit = route_cache.get(key)
+    if hit and hit[0] > now:
+        log("route.cache_hit", kind=kind)
+        return [r.model_copy(deep=True) for r in hit[1]]
+    result = await fetch()
+    route_cache[key] = (now + ROUTE_CACHE_SECONDS, [r.model_copy(deep=True) for r in result])
+    while len(route_cache) > 200:
+        del route_cache[min(route_cache, key=lambda k: route_cache[k][0])]
+    return result
 
 
 @app.middleware("http")
@@ -321,14 +349,16 @@ async def route_search(query: Search):
         warnings.append(
             "Auto and cab fares are estimates from published fare cards and rider reports. The meter or app price may differ."
         )
-    jobs = [provider.routes(query, m) for m in modes]
+    jobs = [
+        cached_routes(f"routes:{m}", query, lambda m=m: provider.routes(query, m)) for m in modes
+    ]
     if "AUTO" in query.modes:
         modes.append("SHARE_AUTO")
-        jobs.append(provider.share_auto(query))
+        jobs.append(cached_routes("share_auto", query, lambda: provider.share_auto(query)))
     hired = [k for k, m in (("auto", "AUTO"), ("cab", "CAB")) if m in query.modes]
     if hired:
         modes.append("AUTO_CAB")
-        jobs.append(provider.hired(query, hired))
+        jobs.append(cached_routes("hired:" + ",".join(hired), query, lambda: provider.hired(query, hired)))
     responses = await asyncio.gather(*jobs, return_exceptions=True)
     routes = []
     for mode, response in zip(modes, responses):

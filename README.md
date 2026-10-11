@@ -42,6 +42,14 @@ Enable billing, Routes API, Places API (New), and Maps JavaScript API in your Go
 - Photos are requested from fresh Places metadata and show supplied author names. No fake landmark image is used. Provider entrances and indoor platform access are not guaranteed.
 - Mobile geolocation requires localhost or HTTPS, browser consent, and device location services.
 
+### Google quota errors (HTTP 429)
+
+`Google Maps rejected the request (HTTP 429)` with "request quota is used up" means your Google Cloud project hit a request cap, usually the Routes API's **ComputeRoutes requests per day** (a new "Maps Platform Demo Project" can be capped as low as 100 a day). One search spends about 4-5 Routes requests (walk, bike, transit, auto/cab, share-auto). The message shows the limit Google reported.
+
+- **Raise it:** Google Cloud Console > APIs & Services > Routes API > *Quotas & system limits* > edit "Compute Routes requests per day" (a few thousand is plenty; the free monthly allowance covers tens of thousands of calls, so a cap also protects you from surprise bills).
+- **Or wait:** daily quotas reset at midnight Pacific time (12:30 IST in winter, 11:30 IST in summer).
+- **Fewer requests:** identical searches reuse the provider's routes for 10 minutes (`ROUTE_CACHE_SECONDS` in `backend/app/main.py`). Fares, rider reports and Gemini are still recomputed each search, failures are never cached, and the keep-alive ping only calls `/api/health`, never Google.
+
 Provider documentation: [Routes](https://developers.google.com/maps/documentation/routes/compute_route_directions), [Transit](https://developers.google.com/maps/documentation/routes/transit-route), [Places Autocomplete](https://developers.google.com/maps/documentation/places/web-service/place-autocomplete).
 
 ## Fares and the open fare model

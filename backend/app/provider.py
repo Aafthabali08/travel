@@ -165,9 +165,16 @@ class GoogleProvider:
                 return response.json()
         except httpx.HTTPStatusError as exc:
             # Report provider reason codes without exposing keys, URLs, or payloads.
+            quota = ""
             try:
                 error = exc.response.json().get("error", {})
                 reasons = [d.get("reason", "") for d in error.get("details", [])]
+                if error.get("status") == "RESOURCE_EXHAUSTED" or "RATE_LIMIT_EXCEEDED" in reasons:
+                    reasons.append("QUOTA_EXHAUSTED")
+                    meta = next((d.get("metadata") for d in error.get("details", []) if d.get("metadata")), {})
+                    limit, unit = meta.get("quota_limit_value"), meta.get("quota_unit", "")
+                    per = "a day" if "/d/" in unit or "PerDay" in meta.get("quota_limit", "") else "per period"
+                    quota = f" Limit: {limit} requests {per}." if limit else ""
             except (ValueError, AttributeError, TypeError):
                 reasons = []
             explanations = {
@@ -177,6 +184,7 @@ class GoogleProvider:
                 "SERVICE_DISABLED": "Enable the requested Google API in the key's Google Cloud project.",
                 "BILLING_DISABLED": "Enable billing for the Google Cloud project.",
                 "API_KEY_INVALID": "The configured Google API key is invalid.",
+                "QUOTA_EXHAUSTED": "This Google project's request quota is used up. It resets daily (midnight Pacific time); to raise it, open Google Cloud Console > APIs & Services > the API > Quotas and edit the limit.",
             }
             reason = next((r for r in reasons if r in explanations), None)
             message = explanations.get(
@@ -184,7 +192,7 @@ class GoogleProvider:
             )
             raise HTTPException(
                 502,
-                f"Google Maps rejected the request (HTTP {exc.response.status_code}{', ' + reason if reason else ''}). {message}",
+                f"Google Maps rejected the request (HTTP {exc.response.status_code}{', ' + reason if reason else ''}). {message}{quota}",
             ) from exc
         except (httpx.HTTPError, ValueError) as exc:
             raise HTTPException(
