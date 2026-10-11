@@ -117,11 +117,16 @@ def prompt(kind: str, km: float, minutes: float, night: bool, context: dict | No
     evidence = context.get("evidence")
     if evidence:
         amounts = ", ".join(str(a) for a in evidence["amounts"])
+        weight = (
+            "Treat these as strong evidence of current local prices, but ignore obvious outliers. "
+            if evidence["riders"] >= 3
+            else "This is very little data and one rider can be unusual (a tourist, a bargain, a "
+            "mistake), so treat it only as a weak hint and rely mainly on typical Vizag fares. "
+        )
         text += (
             f"Recent riders reported what they actually paid for this kind of trip at a similar "
             f"distance, starting or ending within about 2 km of these places: {evidence['riders']} "
-            f"rider(s), amounts in rupees {amounts} (median {evidence['median']}). Treat these as "
-            "strong evidence of current local prices, but ignore obvious outliers. "
+            f"rider(s), amounts in rupees {amounts} (median {evidence['median']}). " + weight
         )
     else:
         text += (

@@ -119,6 +119,15 @@ def test_prompt_names_the_places_the_distance_and_the_riders_fares():
     assert "ignore obvious outliers" in text and "drop-off areas" in text
 
 
+def test_a_single_riders_fare_is_only_a_weak_hint_to_gemini():
+    one = gemini.prompt("auto", 3.8, 12, False, context(evidence=seen(riders=1, median=75, amounts=(75,))))
+    two = gemini.prompt("auto", 3.8, 12, False, context(evidence=seen(riders=2, median=75, amounts=(75, 80))))
+    three = gemini.prompt("auto", 3.8, 12, False, context(evidence=seen()))
+    for weak in (one, two):
+        assert "weak hint" in weak and "strong evidence" not in weak and "75" in weak
+    assert "strong evidence" in three and "weak hint" not in three
+
+
 def test_prompt_says_so_when_no_rider_has_reported_yet():
     text = gemini.prompt("auto", 3.8, 12, False, context())
     assert "No rider reports are available" in text and "rupees" in text and "amounts in rupees" not in text
