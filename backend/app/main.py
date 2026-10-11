@@ -343,6 +343,9 @@ async def route_search(query: Search):
         results,
         storage.load_gemini_fare if has_db else None,
         storage.save_gemini_fare if has_db else None,
+        evidence=lambda kind, km, origin_cell, dest_cell: fare_model.evidence(
+            kind, km, origin_cell, dest_cell
+        ),
     )
     for route in results:
         cache[route.id] = (time.time() + 1800, route)

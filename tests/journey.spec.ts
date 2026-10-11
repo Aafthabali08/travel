@@ -377,6 +377,7 @@ test("our fare and Gemini's suggestion sit side by side with rider progress", as
         gemini_low: 55,
         gemini_high: 90,
         gemini_note: "Short city trip, daytime.",
+        gemini_basis: "Uses 3 rider reports nearby",
       },
     ],
   };
@@ -406,6 +407,7 @@ test("our fare and Gemini's suggestion sit side by side with rider progress", as
   await expect(ai).toContainText("₹70");
   await expect(ai).toContainText("₹55-₹90");
   await expect(ai).toContainText("AI estimate, not verified");
+  await expect(ai).toContainText("Uses 3 rider reports nearby");
   const [left, right] = await Promise.all([ours.boundingBox(), ai.boundingBox()]);
   expect(Math.abs(left!.y - right!.y)).toBeLessThan(2);
   expect(right!.x).toBeGreaterThan(left!.x + left!.width - 1);
@@ -438,6 +440,7 @@ test("an unavailable Gemini suggestion is explained, not hidden or faked", async
   await choosePlaces(page);
   await page.getByRole("button", { name: "Find my routes" }).click();
   await expect(page.locator(".fare-side.gemini")).toContainText("Suggestion unavailable");
+  await expect(page.locator(".fare-side.gemini")).toContainText("Gemini could not be reached.");
   await expect(page.locator(".fare-side.gemini")).not.toContainText("₹");
 });
 

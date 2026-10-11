@@ -194,9 +194,15 @@ function FareCompare({ leg }: { leg: Leg }) {
                 verified
               </small>
               {leg.gemini_note && <small>{leg.gemini_note}</small>}
+              {leg.gemini_basis && (
+                <small className="gemini-basis">{leg.gemini_basis}</small>
+              )}
             </>
           ) : (
-            <small>Suggestion unavailable right now.</small>
+            <>
+              <small>Suggestion unavailable right now.</small>
+              {leg.gemini_note && <small>{leg.gemini_note}</small>}
+            </>
           )}
         </div>
       )}

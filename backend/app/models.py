@@ -55,6 +55,7 @@ class Leg(BaseModel):
     gemini_low: float | None = None
     gemini_high: float | None = None
     gemini_note: str | None = None
+    gemini_basis: str | None = None
 
 
 class Route(BaseModel):

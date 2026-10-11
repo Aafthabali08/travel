@@ -44,6 +44,7 @@ export type Leg = {
   gemini_low?: number | null;
   gemini_high?: number | null;
   gemini_note?: string | null;
+  gemini_basis?: string | null;
 };
 export type FuelPrice = {
   price: number;

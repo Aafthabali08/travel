@@ -212,6 +212,75 @@ def test_only_a_missing_model_triggers_fallback(monkeypatch, configured):
     assert len(sent) == 1 and gemini.unavailable == set()
 
 
+def test_the_fast_model_is_tried_first():
+    assert "lite" in gemini.DEFAULT_MODELS[0]
+
+
+def test_a_busy_model_falls_back_but_is_not_remembered_as_missing(monkeypatch, configured):
+    sent = []
+
+    def handler(request):
+        sent.append(request)
+        if gemini.DEFAULT_MODELS[0] in str(request.url):
+            return httpx.Response(503, json={"error": "high demand"})
+        return httpx.Response(200, json=reply())
+
+    serve(monkeypatch, handler)
+    assert asyncio.run(gemini.request("auto", 5, 15, False))["model"] == gemini.DEFAULT_MODELS[1]
+    assert gemini.unavailable == set()
+    asyncio.run(gemini.request("cab", 5, 15, False))
+    assert models_in(sent)[2] == gemini.DEFAULT_MODELS[0]
+
+
+def test_a_slow_model_times_out_and_the_next_one_answers(monkeypatch, configured):
+    def handler(request):
+        if gemini.DEFAULT_MODELS[0] in str(request.url):
+            raise httpx.ReadTimeout("slow")
+        return httpx.Response(200, json=reply())
+
+    serve(monkeypatch, handler)
+    assert asyncio.run(gemini.request("auto", 5, 15, False))["model"] == gemini.DEFAULT_MODELS[1]
+
+
+def test_when_every_model_is_busy_the_real_reason_is_reported(monkeypatch, configured):
+    sent = []
+
+    def handler(request):
+        sent.append(request)
+        return httpx.Response(429, json={})
+
+    serve(monkeypatch, handler)
+    with pytest.raises(gemini.GeminiError, match="HTTP 429"):
+        asyncio.run(gemini.request("auto", 5, 15, False))
+    assert len(sent) == len(gemini.DEFAULT_MODELS) and gemini.unavailable == set()
+
+
+def test_a_missing_model_then_a_busy_one_reports_busy_not_missing(monkeypatch, configured):
+    def handler(request):
+        if gemini.DEFAULT_MODELS[0] in str(request.url):
+            return httpx.Response(404, json={})
+        return httpx.Response(503, json={})
+
+    serve(monkeypatch, handler)
+    with pytest.raises(gemini.GeminiError, match="HTTP 503"):
+        asyncio.run(gemini.request("auto", 5, 15, False))
+    assert gemini.unavailable == {gemini.DEFAULT_MODELS[0]}
+
+
+def test_slow_failures_stop_trying_more_models_after_the_deadline(monkeypatch, configured):
+    sent = []
+
+    def handler(request):
+        sent.append(request)
+        return httpx.Response(503, json={})
+
+    serve(monkeypatch, handler)
+    monkeypatch.setattr(gemini, "DEADLINE", -1)
+    with pytest.raises(gemini.GeminiError, match="HTTP 503"):
+        asyncio.run(gemini.request("auto", 5, 15, False))
+    assert len(sent) == 1
+
+
 def test_request_handles_network_failure_and_garbage(monkeypatch, configured):
     def down(request):
         raise httpx.ConnectError("boom")

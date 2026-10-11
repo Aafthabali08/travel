@@ -25,6 +25,9 @@ CELL_DEGREES = 0.015
 ZONE_PRIOR_WEIGHT = 8
 MIN_ZONE_VOTERS = 5
 ZONE_CLAMP = (0.7, 1.5)
+NEIGHBOR_KM = 2.4
+EVIDENCE_DAYS = 120
+EVIDENCE_MAX = 12
 
 
 def band(km: float) -> str:
@@ -34,6 +37,17 @@ def band(km: float) -> str:
 def cell(lat: float, lng: float) -> str:
     """A coarse (~1.6 km) map cell. Votes keep this, never the exact coordinates."""
     return f"{math.floor(lat / CELL_DEGREES)}:{math.floor(lng / CELL_DEGREES)}"
+
+
+def cell_km(a: str, b: str) -> float:
+    """Distance between the centres of two map cells (adjacent and diagonal cells are within 2.4 km)."""
+    (lat_a, lng_a), (lat_b, lng_b) = (
+        ((int(i) + 0.5) * CELL_DEGREES, (int(j) + 0.5) * CELL_DEGREES)
+        for i, j in (a.split(":"), b.split(":"))
+    )
+    dy = (lat_b - lat_a) * 111.2
+    dx = (lng_b - lng_a) * 111.2 * math.cos(math.radians((lat_a + lat_b) / 2))
+    return math.hypot(dx, dy)
 
 
 def _ratio(v) -> float | None:
@@ -124,6 +138,7 @@ class FareModel:
         self.fetch_votes = fetch_votes
         self.stats: dict[tuple[str, str], dict] = {}
         self.zones: dict[tuple[str, str], dict] = {}
+        self.rows: list[dict] = []
         self.loaded_at = 0.0
         self.available = False
 
@@ -142,7 +157,48 @@ class FareModel:
             grouped.setdefault((row["kind"], row["band"]), []).append(row)
         self.stats = {key: learn(rows) for key, rows in grouped.items()}
         self.zones = learn_zones(rows, {k: s["multiplier"] for k, s in self.stats.items()})
+        self.rows = rows
         self.available = True
+
+    def evidence(self, kind, km, origin_cell, dest_cell, now: float | None = None) -> dict | None:
+        """What nearby riders actually paid for a similar trip: counts and amounts, never rider ids.
+
+        A report counts when it is the same fare kind and distance band, recent, and starts or ends
+        within ~2.4 km of this trip's start or end. Each rider counts once (their newest report).
+        """
+        now = now or time.time()
+        wanted = [c for c in (origin_cell, dest_cell) if c]
+        if not wanted:
+            return None
+        trip_band, latest = band(km), {}
+        for v in self.rows:
+            if v["kind"] != kind or v["band"] != trip_band:
+                continue
+            if now - v["created_at"] > EVIDENCE_DAYS * 86400:
+                continue
+            cells = [c for c in (v.get("origin_cell"), v.get("dest_cell")) if c]
+            if not any(cell_km(a, c) <= NEIGHBOR_KM for a in wanted for c in cells):
+                continue
+            ratio = _ratio(v)
+            amount = None if ratio is None else v["shown"] if v["verdict"] == "correct" else v["paid"]
+            if not amount or not OUTLIER[0] <= ratio <= OUTLIER[1]:
+                continue
+            mine = latest.get(v["voter"])
+            if mine is None or v["created_at"] > mine[1]:
+                latest[v["voter"]] = (amount, v["created_at"])
+        if not latest:
+            return None
+        recent = [round(a) for a, _ in sorted(latest.values(), key=lambda x: -x[1])][:EVIDENCE_MAX]
+        ordered = sorted(recent)
+        middle = len(ordered) // 2
+        median = ordered[middle] if len(ordered) % 2 else round((ordered[middle - 1] + ordered[middle]) / 2)
+        return {
+            "riders": len(latest),
+            "amounts": recent,
+            "low": ordered[0],
+            "high": ordered[-1],
+            "median": median,
+        }
 
     def get(self, kind: str, km: float, origin_cell: str | None = None, dest_cell: str | None = None) -> dict:
         """Band statistics plus the area layer; `multiplier` is the combined, clamped correction."""
