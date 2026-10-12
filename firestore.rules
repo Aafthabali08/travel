@@ -1,0 +1,189 @@
+rules_version = '2';
+
+// RouteWise access rules. Publish via Firebase console → Firestore Database → Rules,
+// or `firebase deploy --only firestore:rules`. Tested by tests/rules/firestore.rules.test.ts.
+// Keep the admin email in sync with ADMIN_EMAIL in frontend/src/firebase.ts.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+    // Admin must also have a verified email, so nobody can claim the address with an unverified sign-up.
+    function isAdmin() {
+      return signedIn()
+        && request.auth.token.email == 'aafthabali08@gmail.com'
+        && request.auth.token.email_verified == true;
+    }
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+    function tokenEmail() {
+      return request.auth.token.get('email', '');
+    }
+    function incoming() {
+      return request.resource.data;
+    }
+    function changed() {
+      return incoming().diff(resource.data).affectedKeys();
+    }
+    function str(field, max) {
+      return incoming()[field] is string && incoming()[field].size() <= max;
+    }
+    function nowStamp(field) {
+      return incoming()[field] == request.time;
+    }
+    // A counter may stay the same or go up by exactly one per write, so nobody can
+    // reset their own daily usage or inflate shared totals.
+    function bump(before, after, k) {
+      return after.get(k, 0) == before.get(k, 0) || after.get(k, 0) == before.get(k, 0) + 1;
+    }
+    function previous() {
+      return resource == null ? {} : resource.data;
+    }
+
+    // App-wide settings (limits, announcement): everyone signed in reads, only admin writes.
+    match /config/{docId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    // One profile per user. Users can't raise their own limit, unblock themselves, or spoof their email.
+    match /users/{uid} {
+      allow read: if isSelf(uid) || isAdmin();
+      allow create: if isSelf(uid)
+        && incoming().uid == uid
+        && incoming().email == tokenEmail()
+        && str('name', 100)
+        && nowStamp('createdAt')
+        && !incoming().keys().hasAny(['blocked', 'dailyLimit', 'role'])
+        && bump({}, incoming().get('usage', {}), 'searches')
+        && bump({}, incoming().get('usage', {}), 'locates')
+        && bump({}, incoming().get('usage', {}), 'navigations')
+        && incoming().get('tickets', 0) == 0
+        && incoming().get('problems', 0) == 0;
+      allow update: if isAdmin()
+        || (isSelf(uid)
+          && !changed().hasAny(['blocked', 'dailyLimit', 'role', 'uid', 'createdAt'])
+          && incoming().email == tokenEmail()
+          && str('name', 100)
+          && bump(resource.data.get('usage', {}), incoming().get('usage', {}), 'searches')
+          && bump(resource.data.get('usage', {}), incoming().get('usage', {}), 'locates')
+          && bump(resource.data.get('usage', {}), incoming().get('usage', {}), 'navigations')
+          && bump(resource.data, incoming(), 'tickets')
+          && bump(resource.data, incoming(), 'problems'));
+      allow delete: if isAdmin();
+    }
+
+    // Per-user daily counters, id = "<uid>_<YYYY-MM-DD>".
+    match /usage/{id} {
+      allow read: if isAdmin() || (signedIn() && id.matches(request.auth.uid + '_.*'));
+      allow create, update: if signedIn()
+        && incoming().uid == request.auth.uid
+        && id == request.auth.uid + '_' + incoming().date
+        && incoming().keys().hasOnly(['uid', 'date', 'searches', 'locates', 'navigations'])
+        && bump(previous(), incoming(), 'searches')
+        && bump(previous(), incoming(), 'locates')
+        && bump(previous(), incoming(), 'navigations');
+      allow delete: if isAdmin();
+    }
+
+    // App-wide daily counters, id = "YYYY-MM-DD".
+    match /stats/{date} {
+      allow read: if signedIn();
+      allow create, update: if signedIn()
+        && incoming().date == date
+        && incoming().keys().hasOnly(['date', 'searches', 'locates', 'navigations', 'signups', 'tickets', 'problems'])
+        && bump(previous(), incoming(), 'searches')
+        && bump(previous(), incoming(), 'locates')
+        && bump(previous(), incoming(), 'navigations')
+        && bump(previous(), incoming(), 'signups')
+        && bump(previous(), incoming(), 'tickets')
+        && bump(previous(), incoming(), 'problems');
+      allow delete: if isAdmin();
+    }
+
+    match /tickets/{ticketId} {
+      allow read: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow create: if signedIn()
+        && incoming().keys().hasOnly(['uid', 'email', 'name', 'subject', 'category', 'priority', 'description',
+             'hasImage', 'status', 'createdAt', 'updatedAt', 'lastMessage', 'lastMessageAt', 'unreadForAdmin', 'unreadForUser'])
+        && incoming().uid == request.auth.uid
+        && incoming().email == tokenEmail()
+        && incoming().status == 'open'
+        && str('name', 100)
+        && str('subject', 140) && incoming().subject.size() > 0
+        && str('description', 5000) && incoming().description.size() > 0
+        && str('category', 60)
+        && str('lastMessage', 140)
+        && incoming().priority in ['low', 'normal', 'high']
+        && incoming().hasImage is bool
+        && incoming().unreadForUser == false
+        && nowStamp('createdAt');
+      // Owners may reply (bumping the preview fields) and close or reopen; everything else is admin's.
+      allow update: if isAdmin()
+        || (signedIn() && resource.data.uid == request.auth.uid
+          && changed().hasOnly(['status', 'updatedAt', 'lastMessage', 'lastMessageAt', 'unreadForAdmin', 'unreadForUser'])
+          && str('lastMessage', 140)
+          && (incoming().status == resource.data.status || incoming().status in ['open', 'closed']));
+      allow delete: if isAdmin();
+
+      match /messages/{messageId} {
+        allow read: if isAdmin()
+          || (signedIn() && get(/databases/$(database)/documents/tickets/$(ticketId)).data.uid == request.auth.uid);
+        allow create: if incoming().keys().hasOnly(['from', 'uid', 'text', 'createdAt'])
+          && incoming().uid == request.auth.uid
+          && str('text', 2000) && incoming().text.size() > 0
+          && nowStamp('createdAt')
+          && ((isAdmin() && incoming().from in ['admin', 'system'])
+            || (signedIn()
+              && incoming().from == 'user'
+              && get(/databases/$(database)/documents/tickets/$(ticketId)).data.uid == request.auth.uid
+              && get(/databases/$(database)/documents/tickets/$(ticketId)).data.status != 'closed'));
+        allow update, delete: if isAdmin();
+      }
+    }
+
+    // Optional ticket screenshot (compressed JPEG data URL), kept apart so ticket lists stay light.
+    match /ticketImages/{ticketId} {
+      allow read: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow create: if signedIn()
+        && incoming().keys().hasOnly(['uid', 'data'])
+        && incoming().uid == request.auth.uid
+        && str('data', 900000)
+        && incoming().data.matches('^data:image/jpeg;base64,[A-Za-z0-9+/=]+$')
+        && get(/databases/$(database)/documents/tickets/$(ticketId)).data.uid == request.auth.uid;
+      allow delete: if isAdmin();
+    }
+
+    // In-app notifications. "to" is a uid, or "admin" for the admin inbox.
+    // Links may only point inside the app ("#/..."), never to javascript: or other sites.
+    match /notifications/{id} {
+      allow read: if isAdmin() || (signedIn() && resource.data.to == request.auth.uid);
+      allow create: if incoming().keys().hasOnly(['to', 'from', 'title', 'body', 'link', 'read', 'createdAt'])
+        && incoming().from == request.auth.uid
+        && str('title', 200)
+        && str('body', 500)
+        && incoming().link is string
+        && incoming().link.matches('^(#/[A-Za-z0-9/_-]*)?$')
+        && incoming().read == false
+        && nowStamp('createdAt')
+        && (isAdmin() || (signedIn() && incoming().to == 'admin'));
+      allow update: if isAdmin()
+        || (signedIn() && resource.data.to == request.auth.uid && changed().hasOnly(['read']));
+      allow delete: if isAdmin() || (signedIn() && resource.data.to == request.auth.uid);
+    }
+
+    // Errors users saw in the app; write-only for users, admin triages.
+    match /problems/{id} {
+      allow create: if signedIn()
+        && incoming().keys().hasOnly(['uid', 'email', 'message', 'source', 'page', 'userAgent', 'createdAt'])
+        && incoming().uid == request.auth.uid
+        && str('message', 1000)
+        && str('source', 40)
+        && str('page', 200)
+        && str('userAgent', 200)
+        && nowStamp('createdAt');
+      allow read, update, delete: if isAdmin();
+    }
+  }
+}

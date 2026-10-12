@@ -101,7 +101,8 @@ Render runs the Docker image (API + built frontend on one HTTPS origin, which al
 2. **GitHub**: push this repository (`.env` is ignored and must never be committed).
 3. **Render**: New → **Blueprint** → select the repo (`render.yaml`: free plan, Singapore, health check `/api/health`). Enter `GOOGLE_MAPS_API_KEY`, `GOOGLE_MAPS_BROWSER_KEY` and `DATABASE_URL` when prompted.
 4. **Google Cloud**: add `https://<your-service>.onrender.com/*` to the browser key's website restrictions. For the server key, add the outbound IPs from Render's dashboard (service → **Connect** → Outbound) or set application restriction to None (API restrictions still apply).
-5. Open `https://<your-service>.onrender.com/api/health`: expect `"status":"ok"`, `"provider_configured":true`, `"database":"ok"`.
+5. **Firebase** (accounts, tickets, admin): in Render → Environment add `FIREBASE_PROJECT_ID`, `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_APP_ID` (values from `.env`). Render passes them to the Docker build as build arguments, and the `VITE_*` ones are compiled into the frontend, so **redeploy after changing them**. In the Firebase console add `<your-service>.onrender.com` under Authentication → Settings → Authorised domains, and publish `firestore.rules` (see [Accounts and admin](#accounts-and-admin)).
+6. Open `https://<your-service>.onrender.com/api/health`: expect `"status":"ok"`, `"provider_configured":true`, `"database":"ok"`.
 
 Free-tier behaviour: Render sleeps after 15 idle minutes (first request then takes 30–60 s). Supabase pauses after 7 days without database activity; resume it from the dashboard. Fares fall back to the researched values meanwhile.
 
@@ -116,7 +117,22 @@ docker run --rm -p 10000:10000 -e PORT=10000 --env-file .env routewise
 
 Google transit supplies the walk/bus combinations; private auto, cab and share auto routes use Google road distance with the fare model above. Routes are filtered by your budget, walking and time limits, deduplicated, Pareto-filtered within each kind of transport and ranked. The app does not invent bus-to-auto combinations without a licensed transport dataset. Field-test navigation on a phone before relying on it.
 
-PostgreSQL schema and GTFS importer are supplied, but no official local GTFS feed is bundled. Imported feeds are storage-ready; a time-dependent GTFS routing adapter remains future integration work. There is no AI explanation provider connected; displayed explanations are drawn from route facts. There are no user accounts.
+PostgreSQL schema and GTFS importer are supplied, but no official local GTFS feed is bundled. Imported feeds are storage-ready; a time-dependent GTFS routing adapter remains future integration work. There is no AI explanation provider connected; displayed explanations are drawn from route facts. Accounts use Firebase Authentication; see below.
+
+## Accounts and admin
+
+Visitors see the planner as a demo; searching, location, tracking and Help & support need an account (Firebase email/password or Google). Data lives in Cloud Firestore:
+
+| Collection | Holds |
+| --- | --- |
+| `users` | profile, all-time usage, admin-set `dailyLimit` / `blocked` |
+| `usage`, `stats` | per-user and app-wide daily counters (searches, locations, journeys) |
+| `tickets` (+ `messages`), `ticketImages` | support tickets, their chat, optional compressed screenshot |
+| `notifications`, `problems`, `config/app` | in-app notifications, errors users saw, limits and announcement |
+
+The admin dashboard (`/#/admin`) opens only for `aafthabali08@gmail.com` with a **verified** email (Google sign-in verifies automatically). It has Overview, Users (limits, block, message), Usage & quotas, Tickets (status Open → Received → In progress → Resolved → Closed), Chat, Problems, Notifications and Settings.
+
+**Who can do what is enforced by `firestore.rules`**, not the browser: users read only their own data, counters can only rise by one per write, nobody but the verified admin can set limits, block users or post as support, and notification links must stay inside the app. Publish the rules from Firebase console → Firestore Database → Rules (or `firebase deploy --only firestore:rules`) whenever they change. With `FIREBASE_PROJECT_ID` set, the backend also rejects route, place, navigation and fare-vote calls that lack a valid Firebase ID token, and rate-limits per account.
 
 ## PostgreSQL and Docker
 
@@ -140,10 +156,13 @@ Set `DATABASE_URL` first. Imports are transactional, validate required tables an
 
 ```sh
 npm run build
-npm test
-# With npm run dev already running and Google Chrome installed:
-npm run test:e2e
+npm test          # backend (pytest) + frontend unit (Vitest) + Firestore rules (emulator)
+npm run test:e2e  # browser tests against the Firebase emulators (Google Chrome required)
 ```
+
+`test:rules` and `test:e2e` start the Firebase Auth/Firestore emulators, which need the Firebase CLI (`npm i -g firebase-tools`) and Java 21+ on `PATH` (`brew install openjdk@21`, then `export PATH="/opt/homebrew/opt/openjdk@21/bin:$PATH"`). They use the throwaway `demo-routewise` project and never touch the real Firebase project. `test:e2e` starts its own backend (port 8028) and frontend (port 5188), so a running `npm run dev` is unaffected.
+
+Account tests cover the demo gate, sign-up/login errors, the daily allowance, the full ticket loop (image, admin confirm, live chat, notifications, resolve/reopen/close), admin limits/blocking/broadcasts/announcements, problem reporting, admin-only access (including an unverified admin email), HTML/script injection in tickets, and the dark theme. The rules suite attacks each Firestore collection as another user, an anonymous visitor and an unverified "admin".
 
 The backend tests cover fuel/EV math, fare cards and the learning model, vote rules, Gemini parsing/caching/failure handling, the 1-of-3 rider progress, the area-learning model and the database migration, validation, disconnected legs, budget/walking limits, unknown fares, scoring, Pareto filtering, GPS accuracy/deviation/cooldowns, and API errors, with Google mocked. Browser tests use mocked Live responses for the journey, sorting, maps hand-off, live tracking, fare voting, Gemini side-by-side fares, the price note, vehicle settings, search, GPS denial, API failures, and mobile overflow. Real Google responses, Supabase, and physical GPS navigation need their services and a device.
 

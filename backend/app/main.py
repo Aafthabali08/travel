@@ -27,6 +27,7 @@ from .fare_model import (
 )
 from . import gemini
 from . import storage
+from . import firebase_auth
 
 load_dotenv()
 logger = logging.getLogger("routewise")
@@ -113,6 +114,13 @@ async def cached_routes(kind, query, fetch):
     return result
 
 
+def needs_auth(path: str) -> bool:
+    """Endpoints that spend Google Maps/Gemini quota need a signed-in user (photos load via <img>, so stay open)."""
+    if path.startswith(("/api/routes/", "/api/navigation/")) or path == "/api/fares/vote":
+        return True
+    return path.startswith("/api/places/") and not path.endswith("/photo") and path != "/api/places/stop-photo"
+
+
 @app.middleware("http")
 async def trace(request: Request, call_next):
     request.state.trace = uuid.uuid4().hex[:12]
@@ -121,6 +129,16 @@ async def trace(request: Request, call_next):
     peer = request.client.host if request.client else "local"
     now = time.time()
     key = peer
+    if firebase_auth.enabled() and needs_auth(request.url.path):
+        try:
+            claims = await asyncio.to_thread(firebase_auth.verify, request.headers.get("authorization"))
+        except firebase_auth.AuthError as e:
+            log("auth.rejected", "WARN", request_id=request.state.trace, path=request.url.path, reason=str(e))
+            trace_id.reset(token)
+            return JSONResponse(status_code=401, content={"error": str(e), "request_id": request.state.trace})
+        request.state.uid = claims["sub"]
+        # Count the per-minute limit per account, so users behind one NAT don't share a budget.
+        key = "uid:" + claims["sub"]
     for old in list(requests):
         if not requests[old] or requests[old][-1] < now - 60:
             del requests[old]

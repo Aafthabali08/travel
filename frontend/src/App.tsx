@@ -1,10 +1,4 @@
-import {
-  useEffect,
-  useRef,
-  useState,
-  Component,
-  type ReactNode,
-} from "react";
+import { useEffect, useRef, useState, Component, type ReactNode } from "react";
 import {
   ArrowRight,
   ArrowUpRight,
@@ -36,9 +30,14 @@ import {
   X,
   Zap,
   CheckCircle2,
+  LifeBuoy,
+  Megaphone,
 } from "lucide-react";
 import { api, log } from "./api";
 import { JourneyMap } from "./Map";
+import { AccountArea, useAuth } from "./auth";
+import { auth } from "./firebase";
+import { reportProblem, trackUsage, type UsageKind } from "./data";
 import type {
   FareResearch,
   Leg,
@@ -345,12 +344,17 @@ function StopPhoto({ place }: { place: Place }) {
       lat: String(place.lat),
       lng: String(place.lng),
     });
-    api<StopPhotoData>(`/api/places/stop-photo?${params}`, undefined, controller.signal)
+    api<StopPhotoData>(
+      `/api/places/stop-photo?${params}`,
+      undefined,
+      controller.signal,
+    )
       .then(setData)
       .catch(() => setFailed(true));
     return () => controller.abort();
   }, [place.name, place.lat, place.lng, place.photo]);
-  if (!failed && !data) return <p className="stop-photo-note">Finding a photo of {place.name}…</p>;
+  if (!failed && !data)
+    return <p className="stop-photo-note">Finding a photo of {place.name}…</p>;
   if (failed || !data?.photo)
     return (
       <p className="stop-photo-note">
@@ -430,6 +434,7 @@ function SearchBox({
   onChange: (p: Place | null) => void;
   placeholder: string;
 }) {
+  const { user, openAuth } = useAuth();
   const [text, setText] = useState(value?.name || "");
   const [results, setResults] = useState<Place[]>([]);
   const [open, setOpen] = useState(false);
@@ -441,7 +446,7 @@ function SearchBox({
     setResults([]);
   }, [value]);
   useEffect(() => {
-    if (!open || text.length < 2) {
+    if (!open || text.length < 2 || !user) {
       setResults([]);
       return;
     }
@@ -466,7 +471,7 @@ function SearchBox({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [text, open]);
+  }, [text, open, user]);
   async function choose(place: Place) {
     const n = ++sequence.current;
     try {
@@ -489,7 +494,15 @@ function SearchBox({
           aria-label={label}
           value={text}
           placeholder={placeholder}
-          onFocus={() => setOpen(true)}
+          onFocus={(e) => {
+            // Place search spends API quota, so the demo asks visitors to sign in first.
+            if (!user) {
+              e.currentTarget.blur();
+              openAuth("login");
+              return;
+            }
+            setOpen(true);
+          }}
           onChange={(e) => {
             setText(e.target.value);
             setOpen(true);
@@ -602,7 +615,8 @@ function VehicleSettings({
               <select
                 value={draft.mode}
                 onChange={(e) => {
-                  const fuel = e.target.value === "EV" ? "Electricity" : "Petrol";
+                  const fuel =
+                    e.target.value === "EV" ? "Electricity" : "Petrol";
                   setDraft({
                     ...draft,
                     mode: e.target.value as Vehicle["mode"],
@@ -745,6 +759,32 @@ function VehicleSettings({
   );
 }
 export default function App() {
+  const {
+    user,
+    ready: authReady,
+    openAuth,
+    blockReason,
+    settings: appSettings,
+  } = useAuth();
+  // Logged-out visitors see the demo page; real actions ask them to sign in first,
+  // and signed-in actions are checked against the account's daily allowance.
+  const gated =
+    <A extends unknown[]>(action: (...args: A) => unknown, kind?: UsageKind) =>
+    (...args: A) => {
+      const reason = blockReason(kind);
+      if (reason === "login") {
+        log("auth.prompted");
+        openAuth("login");
+        return;
+      }
+      if (reason) {
+        setError(reason);
+        log("usage.blocked", kind ?? "", "WARN");
+        return;
+      }
+      if (kind && user) trackUsage(user, kind);
+      action(...args);
+    };
   const [config, setConfig] = useState<
     | ({
         live_ready: boolean;
@@ -813,6 +853,7 @@ export default function App() {
     const msg = e instanceof Error ? e.message : String(e);
     setError(msg);
     log("error.displayed", msg, "ERROR");
+    reportProblem(user, msg, "planner");
   };
   function stopNavigation() {
     navVersion.current++;
@@ -1056,6 +1097,7 @@ export default function App() {
   }, [position, active]);
   async function startNavigation() {
     if (!selected) return;
+    if (user) trackUsage(user, "navigations");
     if (Date.now() / 1000 - createdAt.current > 1800) {
       fail(
         "This route is more than 30 minutes old. Find routes again before navigating.",
@@ -1133,7 +1175,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <a className="brand" href="/" aria-label="RouteWise home">
+        <a className="brand" href="#/" aria-label="RouteWise home">
           <span className="brand-mark">
             <RouteIcon size={23} />
           </span>
@@ -1151,15 +1193,20 @@ export default function App() {
           >
             <Compass size={17} /> Plan a journey
           </button>
-          <button onClick={() => setSettings(true)}>
+          <button onClick={gated(() => setSettings(true))}>
             <Bike size={18} /> My vehicle
           </button>
+          {user && (
+            <a className="nav-link" href="#/support">
+              <LifeBuoy size={17} /> Help
+            </a>
+          )}
         </nav>
         <div className="top-right">
           <span className="city">
             <MapPin size={14} /> Visakhapatnam
           </span>
-          <span className="avatar">RW</span>
+          <AccountArea onLogOut={stopNavigation} />
         </div>
       </header>
       <main id="planner">
@@ -1173,6 +1220,30 @@ export default function App() {
             </p>
           </div>
         </div>
+        {user && appSettings.announcement && (
+          <div className="demo-banner announcement">
+            <Megaphone size={18} />
+            <div>
+              <strong>From the RouteWise team</strong>
+              <p>{appSettings.announcement}</p>
+            </div>
+          </div>
+        )}
+        {authReady && !user && (
+          <div className="demo-banner">
+            <Sparkles size={18} />
+            <div>
+              <strong>You’re viewing a demo</strong>
+              <p>
+                Log in or sign up to find routes, compare fares, use your
+                location and track your journey.
+              </p>
+            </div>
+            <button onClick={() => openAuth("signup")}>
+              Get started <ArrowRight size={15} />
+            </button>
+          </div>
+        )}
         {error && (
           <div className="error-banner" role="alert">
             <TriangleAlert size={21} />
@@ -1230,7 +1301,7 @@ export default function App() {
                 <ArrowUpDown size={16} />
               </button>
             </div>
-            <button className="use-location" onClick={locate}>
+            <button className="use-location" onClick={gated(locate, "locates")}>
               <LocateFixed size={15} /> Use my current location{" "}
               <ArrowUpRight size={14} />
             </button>
@@ -1380,7 +1451,7 @@ export default function App() {
             <button
               className="primary find-routes"
               disabled={loading || !config}
-              onClick={findRoutes}
+              onClick={gated(findRoutes, "searches")}
             >
               {loading ? (
                 <>
@@ -1406,7 +1477,7 @@ export default function App() {
               </div>
               <button
                 aria-label="Open vehicle settings"
-                onClick={() => setSettings(true)}
+                onClick={gated(() => setSettings(true))}
               >
                 <ArrowUpRight size={18} />
               </button>
@@ -1434,7 +1505,7 @@ export default function App() {
                     : "Your location stays private"}
                 </span>
               </div>
-              <button onClick={locate}>
+              <button onClick={gated(locate, "locates")}>
                 <LocateFixed size={15} />
                 <span>Where am I?</span>
               </button>
@@ -1545,9 +1616,7 @@ export default function App() {
                     <strong>
                       {money(r.cost)}
                       {r.cost !== null && r.cost > 0 && <PriceNote passive />}
-                      {r.cost !== null && (
-                        <small>{r.cost_label}</small>
-                      )}
+                      {r.cost !== null && <small>{r.cost_label}</small>}
                     </strong>
                   </div>
                   <div className="route-card-bottom">
@@ -1576,9 +1645,7 @@ export default function App() {
                     {selected.cost !== null && selected.cost > 0 && (
                       <PriceNote align="right" />
                     )}
-                    <small>
-                      total estimate
-                    </small>
+                    <small>total estimate</small>
                   </span>
                 </div>
                 <div className="timeline">
@@ -1605,10 +1672,10 @@ export default function App() {
                               : leg.fare_kind === "auto"
                                 ? `Private auto to ${leg.destination.name}`
                                 : leg.mode === "AUTO"
-                                ? `Share auto to ${leg.destination.name}`
-                                : leg.line
-                                  ? `Take ${names[leg.mode].toLowerCase()} ${leg.line}`
-                                  : `${names[leg.mode]} to ${leg.destination.name}`}
+                                  ? `Share auto to ${leg.destination.name}`
+                                  : leg.line
+                                    ? `Take ${names[leg.mode].toLowerCase()} ${leg.line}`
+                                    : `${names[leg.mode]} to ${leg.destination.name}`}
                           </h4>
                           <span>{Math.ceil(leg.duration / 60)} min</span>
                         </div>
@@ -1647,16 +1714,14 @@ export default function App() {
                                 ` · + ₹${vehicle.parking + vehicle.toll} parking and tolls in the trip total`}
                             </p>
                           )}
-                        {leg.fare_kind &&
-                          leg.cost !== null &&
-                          leg.cost > 0 && (
-                            <FareVote
-                              key={`${selected.id}-${i}`}
-                              routeId={selected.id}
-                              legIndex={i}
-                              fare={leg.cost}
-                            />
-                          )}
+                        {leg.fare_kind && leg.cost !== null && leg.cost > 0 && (
+                          <FareVote
+                            key={`${selected.id}-${i}`}
+                            routeId={selected.id}
+                            legIndex={i}
+                            fare={leg.cost}
+                          />
+                        )}
                         {i === legIndex && (
                           <div className="leg-guidance">
                             <div className="guidance-title">
@@ -1684,11 +1749,12 @@ export default function App() {
                                   )}{" "}
                                   min
                                 </span>
-                                <small>
-                                  {navState.replaceAll("_", " ")}
-                                </small>
+                                <small>{navState.replaceAll("_", " ")}</small>
                                 {active && (
-                                  <div className="live-stats" aria-live="polite">
+                                  <div
+                                    className="live-stats"
+                                    aria-live="polite"
+                                  >
                                     <span className="live-badge">
                                       <i /> LIVE
                                     </span>
@@ -1771,24 +1837,24 @@ export default function App() {
                                     </div>
                                   )}
                                 </div>
-                              {active && (
-                                <button
-                                  className="nav-secondary"
-                                  onClick={() => {
-                                    navVersion.current++;
-                                    setActive(false);
-                                    if (watch.current !== null) {
-                                      navigator.geolocation.clearWatch(
-                                        watch.current,
-                                      );
-                                      watch.current = null;
-                                    }
-                                    log("navigation.paused");
-                                  }}
-                                >
-                                  <Pause size={12} /> Stop tracking
-                                </button>
-                              )}
+                                {active && (
+                                  <button
+                                    className="nav-secondary"
+                                    onClick={() => {
+                                      navVersion.current++;
+                                      setActive(false);
+                                      if (watch.current !== null) {
+                                        navigator.geolocation.clearWatch(
+                                          watch.current,
+                                        );
+                                        watch.current = null;
+                                      }
+                                      log("navigation.paused");
+                                    }}
+                                  >
+                                    <Pause size={12} /> Stop tracking
+                                  </button>
+                                )}
                               </div>
                               <button className="text-button" onClick={nextLeg}>
                                 <CheckCircle2 size={14} />
@@ -1850,8 +1916,8 @@ export default function App() {
                     </>
                   ) : (
                     <p>
-                      No photo is available for this place. Follow the route
-                      and mapped destination.
+                      No photo is available for this place. Follow the route and
+                      mapped destination.
                     </p>
                   )}
                 </div>
@@ -1887,6 +1953,7 @@ export class ErrorBoundary extends Component<
   }
   componentDidCatch(e: Error) {
     log("react.render.failed", e.message, "ERROR");
+    reportProblem(auth?.currentUser ?? null, e.message, "render");
   }
   render() {
     return this.state.error ? (

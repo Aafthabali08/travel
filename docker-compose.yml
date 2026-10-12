@@ -1,12 +1,19 @@
 services:
   app:
-    build: .
+    build:
+      context: .
+      args:
+        VITE_FIREBASE_API_KEY: ${VITE_FIREBASE_API_KEY:-}
+        VITE_FIREBASE_AUTH_DOMAIN: ${VITE_FIREBASE_AUTH_DOMAIN:-}
+        VITE_FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID:-}
+        VITE_FIREBASE_APP_ID: ${VITE_FIREBASE_APP_ID:-}
     ports: ["127.0.0.1:8018:8018"]
     environment:
       GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
       GOOGLE_MAPS_BROWSER_KEY: ${GOOGLE_MAPS_BROWSER_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-}
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
       DATABASE_URL: postgresql+psycopg://routewise:routewise@db:5432/routewise
     depends_on:
       db:

@@ -1,4 +1,17 @@
 import { test, expect, type Page } from "@playwright/test";
+import { createUser, logIn, resetEmulators } from "./support";
+
+async function open(page: Page) {
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "Account menu" })).toBeVisible();
+}
+
+// The planner's features need a signed-in user; each test starts from a clean emulator.
+test.beforeEach(async ({ page }) => {
+  await resetEmulators();
+  await createUser("rider@example.com", "Rider", true);
+  await logIn(page, "rider@example.com");
+});
 
 const places: Record<string, any> = {
   "live-a": { id: "live-a", name: "RK Beach", lat: 17.7145, lng: 83.3237 },
@@ -152,7 +165,7 @@ test("live journey: compare, sort, hand off to maps and track", async ({ page })
   page.on("pageerror", (e) => errors.push(e.message));
   await fakeGps(page);
   await mockLive(page);
-  await page.goto("/");
+  await open(page);
   await expect(page.getByRole("heading", { name: "Every step, sorted." })).toBeVisible();
   await expect(page.getByRole("button", { name: "Demo" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Debug" })).toHaveCount(0);
@@ -182,12 +195,13 @@ test("live journey: compare, sort, hand off to maps and track", async ({ page })
 
 test("vehicle settings persist and an empty result is explained", async ({ page }) => {
   await mockLive(page, []);
-  await page.goto("/");
+  await open(page);
   await page.getByRole("button", { name: "My vehicle", exact: true }).click();
   await page.getByLabel("Vehicle name").fill("City bike");
   await page.getByLabel("Mileage").fill("50");
   await page.getByRole("button", { name: "Save vehicle" }).click();
   await page.reload();
+  await expect(page.getByRole("button", { name: "Account menu" })).toBeVisible();
   await page.getByRole("button", { name: "My vehicle", exact: true }).click();
   await expect(page.getByLabel("Vehicle name")).toHaveValue("City bike");
   await expect(page.getByLabel("Mileage")).toHaveValue("50");
@@ -215,7 +229,7 @@ test("GPS denial is visible", async ({ page, context }) => {
       return 1;
     };
   });
-  await page.goto("/");
+  await open(page);
   await page.getByRole("button", { name: "Use my current location" }).click();
   await expect(page.getByRole("alert")).toContainText("permission was denied");
 });
@@ -223,7 +237,7 @@ test("GPS denial is visible", async ({ page, context }) => {
 test("mobile layout and API failure display", async ({ page }) => {
   await mockLive(page);
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/");
+  await open(page);
   await choosePlaces(page);
   await page.getByRole("button", { name: "Find my routes" }).click();
   await expect(page.locator(".route-card").first()).toBeVisible();
@@ -245,7 +259,7 @@ test("mobile layout and API failure display", async ({ page }) => {
 
 test("place search and swap update selected places", async ({ page }) => {
   await mockLive(page);
-  await page.goto("/");
+  await open(page);
   await choosePlaces(page);
   await expect(
     page.getByRole("textbox", { name: "DESTINATION", exact: true }),
@@ -258,7 +272,7 @@ test("place search and swap update selected places", async ({ page }) => {
 
 test("completes every leg of a multimodal journey", async ({ page }) => {
   await mockLive(page, [busRoute]);
-  await page.goto("/");
+  await open(page);
   await choosePlaces(page);
   await page.getByRole("button", { name: "Find my routes" }).click();
   await expect(page.locator(".timeline-leg")).toHaveCount(3);
@@ -273,7 +287,7 @@ test("completes every leg of a multimodal journey", async ({ page }) => {
 });
 
 test("map controls and legend", async ({ page }) => {
-  await page.goto("/");
+  await open(page);
   await expect(page.locator(".map-chip")).toContainText("LIVE MAP");
   await page.getByRole("button", { name: "Zoom in", exact: true }).click();
   await page.getByRole("button", { name: "Zoom out", exact: true }).click();
@@ -288,7 +302,7 @@ test("GPS success and low accuracy are visible without saving coordinates", asyn
   page,
 }) => {
   await fakeGps(page, 100);
-  await page.goto("/");
+  await open(page);
   await page.getByRole("button", { name: "Use my current location" }).click();
   await expect(
     page.getByRole("textbox", { name: "STARTING POINT", exact: true }),
@@ -303,7 +317,7 @@ test("GPS success and low accuracy are visible without saving coordinates", asyn
 test("unselected destination text cannot search the previous place", async ({
   page,
 }) => {
-  await page.goto("/");
+  await open(page);
   await page
     .getByRole("textbox", { name: "DESTINATION", exact: true })
     .fill("unselected destination");
@@ -334,7 +348,7 @@ test("riders can rate a live fare and see what the model learned", async ({
       },
     });
   });
-  await page.goto("/");
+  await open(page);
   await choosePlaces(page);
   await page.getByRole("button", { name: "Find my routes" }).click();
   await expect(page.locator(".timeline-leg").first()).toContainText(
@@ -352,7 +366,7 @@ test("riders can rate a live fare and see what the model learned", async ({
 });
 
 test("Google authentication failure shows a recoverable error", async ({ page }) => {
-  await page.goto("/");
+  await open(page);
   await page.evaluate(() => {
     (window as any).gm_authFailure();
   });
@@ -398,7 +412,7 @@ test("our fare and Gemini's suggestion sit side by side with rider progress", as
       },
     }),
   );
-  await page.goto("/");
+  await open(page);
   await choosePlaces(page);
   await page.getByRole("button", { name: "Find my routes" }).click();
   const ours = page.locator(".fare-side").first();
@@ -426,7 +440,7 @@ test("our fare and Gemini's suggestion sit side by side with rider progress", as
 
 test("fare legs without a Gemini suggestion still show rider progress", async ({ page }) => {
   await mockLive(page, [autoRoute]);
-  await page.goto("/");
+  await open(page);
   await choosePlaces(page);
   await page.getByRole("button", { name: "Find my routes" }).click();
   await expect(page.locator(".fare-side")).toHaveCount(1);
@@ -440,7 +454,7 @@ test("an unavailable Gemini suggestion is explained, not hidden or faked", async
     legs: [{ ...autoRoute.legs[0], gemini_status: "unavailable", gemini_note: "Gemini could not be reached." }],
   };
   await mockLive(page, [down]);
-  await page.goto("/");
+  await open(page);
   await choosePlaces(page);
   await page.getByRole("button", { name: "Find my routes" }).click();
   await expect(page.locator(".fare-side.gemini")).toContainText("Suggestion unavailable");
@@ -452,7 +466,7 @@ test("every paid price carries a note about availability, holidays, weather and 
   page,
 }) => {
   await mockLive(page, [autoRoute, walkRoute]);
-  await page.goto("/");
+  await open(page);
   await choosePlaces(page);
   await page.getByRole("button", { name: "Find my routes" }).click();
   await page.getByRole("button", { name: "Cheapest", exact: true }).click();
@@ -484,7 +498,7 @@ test("every paid price carries a note about availability, holidays, weather and 
 
 test("a walking-only route shows no price note", async ({ page }) => {
   await mockLive(page, [walkRoute]);
-  await page.goto("/");
+  await open(page);
   await choosePlaces(page);
   await page.getByRole("button", { name: "Find my routes" }).click();
   await expect(page.locator(".route-card")).toHaveCount(1);
@@ -494,7 +508,7 @@ test("a walking-only route shows no price note", async ({ page }) => {
 test("the price note stays on screen on a phone", async ({ page }) => {
   await mockLive(page, [autoRoute]);
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/");
+  await open(page);
   await choosePlaces(page);
   await page.getByRole("button", { name: "Find my routes" }).click();
   for (const trigger of [".detail-total .price-note", ".leg-meta .price-note", ".fare-side .price-note"]) {

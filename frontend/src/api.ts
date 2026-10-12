@@ -11,6 +11,11 @@ export function log(event: string, detail = "", level: Level = "INFO") {
     body: JSON.stringify({ event, detail, level }),
   }).catch(() => {});
 }
+// auth.tsx registers this so API calls carry the Firebase ID token (kept here to avoid an import cycle).
+let tokenProvider: () => Promise<string | null> = async () => null;
+export function setTokenProvider(fn: () => Promise<string | null>) {
+  tokenProvider = fn;
+}
 export async function api<T>(
   path: string,
   body?: unknown,
@@ -19,9 +24,13 @@ export async function api<T>(
   const started = performance.now();
   log("request.started", path.split("?")[0]);
   try {
+    const token = await tokenProvider().catch(() => null);
     const response = await fetch(path, {
       method: body === undefined ? "GET" : "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: signal ?? AbortSignal.timeout(30000),
     });

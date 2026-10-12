@@ -4,6 +4,15 @@ COPY package*.json ./
 RUN npm ci
 COPY frontend frontend
 COPY tsconfig.json vite.config.mjs ./
+# Firebase web config is compiled into the frontend bundle, so it must be present at build time.
+ARG VITE_FIREBASE_API_KEY
+ARG VITE_FIREBASE_AUTH_DOMAIN
+ARG VITE_FIREBASE_PROJECT_ID
+ARG VITE_FIREBASE_APP_ID
+ENV VITE_FIREBASE_API_KEY=$VITE_FIREBASE_API_KEY \
+    VITE_FIREBASE_AUTH_DOMAIN=$VITE_FIREBASE_AUTH_DOMAIN \
+    VITE_FIREBASE_PROJECT_ID=$VITE_FIREBASE_PROJECT_ID \
+    VITE_FIREBASE_APP_ID=$VITE_FIREBASE_APP_ID
 RUN npm run build
 
 FROM python:3.12-slim

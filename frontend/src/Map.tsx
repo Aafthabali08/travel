@@ -1,3 +1,4 @@
+import { useTheme } from "./theme";
 import { useEffect, useRef, useState } from "react";
 import { LocateFixed, Plus, Minus, Layers, MapPin } from "lucide-react";
 import type { Place, Point, Route } from "./types";
@@ -61,6 +62,7 @@ export function JourneyMap({
   const [legend, setLegend] = useState(true);
   const errorRef = useRef(onError);
   errorRef.current = onError;
+  const theme = useTheme();
   useEffect(() => {
     let dead = false;
     setReady(false);
@@ -79,6 +81,13 @@ export function JourneyMap({
           center: { lat: 17.725, lng: 83.301 },
           zoom: 14,
           disableDefaultUI: true,
+          // Only settable at creation, so the map is rebuilt when the theme changes.
+          ...(g.maps.ColorScheme && {
+            colorScheme:
+              theme === "dark"
+                ? g.maps.ColorScheme.DARK
+                : g.maps.ColorScheme.LIGHT,
+          }),
         });
         if (!dead) setReady(true);
       } catch (error) {
@@ -97,7 +106,7 @@ export function JourneyMap({
       overlay.current = [];
       map.current = null;
     };
-  }, [browserKey]);
+  }, [browserKey, theme]);
   useEffect(() => {
     if (!ready || !map.current) return;
     const g = (window as any).google;
