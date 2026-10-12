@@ -345,6 +345,16 @@ test("riders can rate a live fare and see what the model learned", async ({
         multiplier: 1.19,
         kind: "auto",
         band: "3-7 km",
+        leg: {
+          ...autoRoute.legs[0],
+          cost: 76,
+          fare_voters: 3,
+          fare_applied: true,
+          fare_low: 66,
+          fare_high: 88,
+          fare_basis: "Rider-checked · 3 riders",
+        },
+        route_cost: 76,
       },
     });
   });
@@ -361,6 +371,14 @@ test("riders can rate a live fare and see what the model learned", async ({
   await expect(page.locator(".fare-vote.done")).toContainText(
     "This fare is now ₹76, learned from 3 riders.",
   );
+  // The fare card, the step's basis and the route total update without a new search.
+  const card = page.locator(".fare-side").first();
+  await expect(card).toContainText("₹76");
+  await expect(card).toContainText("Rider-checked by 3 riders");
+  await expect(card).toContainText("Riders usually pay ₹66-₹88");
+  await expect(card).not.toContainText("of 3 riders so far");
+  await expect(page.locator(".fare-basis").first()).toContainText("Rider-checked · 3 riders");
+  await expect(page.locator(".route-card").first()).toContainText("₹76");
   expect(vote).toMatchObject({ route_id: "auto-route", leg: 0, verdict: "wrong", paid: 100 });
   expect(vote.voter.length).toBeGreaterThanOrEqual(32);
 });
@@ -521,4 +539,31 @@ test("the price note stays on screen on a phone", async ({ page }) => {
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
   ).toBe(true);
+});
+
+test("the first rider's report moves the card from 0 to 1 of 3 riders", async ({ page }) => {
+  await mockLive(page, [autoRoute]);
+  await page.route("**/api/fares/vote", (r) =>
+    r.fulfill({
+      json: {
+        fare: 65,
+        voters: 1,
+        applied: false,
+        needed: 3,
+        message: "Thanks! 1 of 3 riders so far. The fare updates once 3 riders report it. Your report already nudged it to ₹65.",
+        leg: { ...autoRoute.legs[0], cost: 65, fare_voters: 1, fare_applied: false, fare_needed: 3 },
+        route_cost: 65,
+      },
+    }),
+  );
+  await open(page);
+  await choosePlaces(page);
+  await page.getByRole("button", { name: "Find my routes" }).click();
+  const card = page.locator(".fare-side").first();
+  await expect(card).toContainText("0 of 3 riders so far");
+  await page.getByRole("button", { name: "Correct" }).click();
+  await expect(page.locator(".fare-vote.done")).toContainText("1 of 3 riders so far");
+  await expect(card).toContainText("1 of 3 riders so far");
+  await expect(card).toContainText("₹65");
+  await expect(page.locator(".route-card").first()).toContainText("₹65");
 });

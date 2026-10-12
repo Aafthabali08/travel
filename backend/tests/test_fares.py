@@ -84,10 +84,21 @@ def test_fewer_than_three_riders_only_nudge_the_fare():
 def test_one_rider_cannot_stack_up_a_bigger_nudge_by_reporting_again():
     once = learn([vote("a", paid=200)])
     many = learn([vote("a", paid=200, age_days=d) for d in range(30)])
-    assert many["voters"] == 1 and many["reports"] == 30 and many["applied"] is False
+    # Re-reporting the same trip replaces the rider's earlier report instead of piling up.
+    assert many["voters"] == 1 and many["reports"] == 1 and many["applied"] is False
     assert many["multiplier"] == pytest.approx(once["multiplier"], abs=0.01)
     biggest = learn([vote("a", paid=390)])["multiplier"]
     assert biggest < 1.1 and learn([vote("a", paid=26)])["multiplier"] > 0.9
+
+
+def test_one_rider_reporting_daily_cannot_outvote_other_riders():
+    fair = [vote(v, paid=100) for v in "abc"]
+    honest = learn(fair)
+    spammed = learn(fair + [vote("z", paid=390, age_days=d) for d in range(50)])
+    with_one_more = learn(fair + [vote("z", paid=390)])
+    assert spammed["voters"] == 4
+    assert spammed["multiplier"] == pytest.approx(with_one_more["multiplier"], abs=1e-3)
+    assert spammed["multiplier"] < honest["multiplier"] * 1.35
 
 
 def test_a_nudge_follows_the_riders_newest_report():

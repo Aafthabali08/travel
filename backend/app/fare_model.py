@@ -128,9 +128,19 @@ def progress_message(voters: int, applied: bool, fare: float, researched: float 
 
 
 def _prepare(rows, now: float) -> dict[str, list[dict]]:
-    """Usable reports grouped by fare kind: disputes and absurd amounts are dropped."""
-    grouped: dict[str, list[dict]] = {}
+    """Usable reports grouped by fare kind: disputes and absurd amounts are dropped.
+
+    One rider has one opinion per trip: for the same fare kind, distance and start/end cells only
+    their newest report counts, so someone re-reporting a trip every day can't outweigh other riders.
+    """
+    newest: dict[tuple, dict] = {}
     for v in rows:
+        km = v.get("km") or BAND_CENTERS.get(v["band"], 5.0)
+        key = (v["voter"], v["kind"], _bin(km), v.get("origin_cell"), v.get("dest_cell"))
+        if key not in newest or v["created_at"] >= newest[key]["created_at"]:
+            newest[key] = v
+    grouped: dict[str, list[dict]] = {}
+    for v in newest.values():
         ratio = _ratio(v)
         if ratio is None or not OUTLIER[0] <= ratio <= OUTLIER[1]:
             continue

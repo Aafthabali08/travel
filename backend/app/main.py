@@ -313,36 +313,46 @@ def price_route(route, query, when=None):
         if not leg.fare_kind:
             continue
         km = leg.distance / 1000
-        rule = RULES[leg.fare_kind]
         leg.base_fare = estimate(leg.fare_kind, km, leg.duration / 60, when)
         if leg.fare_kind == "bus" and query.stree_shakti:
             leg.cost = 0
             leg.fare_basis = "Stree Shakti free travel (City Ordinary and Metro Express)"
             continue
-        stats = fare_model.get(leg.fare_kind, km, *leg_cells(leg), when.hour)
-        leg.cost = float(round(leg.base_fare * stats["multiplier"]))
-        leg.fare_reports = stats["reports"]
-        leg.fare_voters = stats["voters"]
-        leg.fare_applied = stats["applied"]
-        leg.fare_area_adjusted = stats["area_applied"]
-        leg.fare_area_riders = stats["area_riders"]
-        leg.fare_time_adjusted = stats["time_applied"]
-        if stats["spread"] is not None:
-            leg.fare_low = float(round(leg.cost * math.exp(-stats["spread"])))
-            leg.fare_high = float(round(leg.cost * math.exp(stats["spread"])))
-        leg.fare_basis = (
-            f"Rider-checked · {stats['voters']} riders"
-            if stats["applied"]
-            else f"Estimate · {rule['source']} (checked {rule['checked']})"
+        price_leg(leg, fare_model.get(leg.fare_kind, km, *leg_cells(leg), when.hour))
+    total_route_cost(route)
+
+
+def price_leg(leg, stats):
+    """Apply what the fare model learned (distance, area, time of day) to one leg's fare card."""
+    rule = RULES[leg.fare_kind]
+    leg.cost = float(round(leg.base_fare * stats["multiplier"]))
+    leg.fare_reports = stats["reports"]
+    leg.fare_voters = stats["voters"]
+    leg.fare_applied = stats["applied"]
+    leg.fare_area_adjusted = stats["area_applied"]
+    leg.fare_area_riders = stats["area_riders"]
+    leg.fare_time_adjusted = stats["time_applied"]
+    if stats["spread"] is not None:
+        leg.fare_low = float(round(leg.cost * math.exp(-stats["spread"])))
+        leg.fare_high = float(round(leg.cost * math.exp(stats["spread"])))
+    else:
+        leg.fare_low = leg.fare_high = None
+    leg.fare_basis = (
+        f"Rider-checked · {stats['voters']} riders"
+        if stats["applied"]
+        else f"Estimate · {rule['source']} (checked {rule['checked']})"
+    )
+    if stats["provisional"]:
+        leg.fare_basis += (
+            f" · nudged by {stats['voters']} rider report{'s' if stats['voters'] != 1 else ''}"
         )
-        if stats["provisional"]:
-            leg.fare_basis += (
-                f" · nudged by {stats['voters']} rider report{'s' if stats['voters'] != 1 else ''}"
-            )
-        if stats["area_applied"]:
-            leg.fare_basis += f" · adjusted for this area ({stats['area_riders']} riders nearby)"
-        if stats["time_applied"]:
-            leg.fare_basis += " · adjusted for this time of day"
+    if stats["area_applied"]:
+        leg.fare_basis += f" · adjusted for this area ({stats['area_riders']} riders nearby)"
+    if stats["time_applied"]:
+        leg.fare_basis += " · adjusted for this time of day"
+
+
+def total_route_cost(route):
     if any(l.fare_kind for l in route.legs):
         costs = [l.cost for l in route.legs]
         route.cost = (
@@ -507,7 +517,7 @@ async def fares():
 
 
 @app.post("/api/fares/vote")
-async def vote_fare(body: FareVote):
+async def vote_fare(body: FareVote, request: Request):
     prune()
     entry = cache.get(body.route_id)
     if not entry:
@@ -526,9 +536,13 @@ async def vote_fare(body: FareVote):
         raise HTTPException(503, "Fare voting needs a database. Set DATABASE_URL.")
     km = leg.distance / 1000
     origin_cell, dest_cell = leg_cells(leg)
+    # A rider is a signed-in account when sign-in is enforced, so clearing browser storage
+    # can't turn one person into several riders. Storage keeps only a hash of it.
+    uid = getattr(request.state, "uid", None)
+    voter = f"uid:{uid}" if uid else body.voter
     await asyncio.to_thread(
         storage.save_vote,
-        body.voter,
+        voter,
         leg.fare_kind,
         band(km),
         leg.base_fare,
@@ -542,9 +556,14 @@ async def vote_fare(body: FareVote):
     )
     await asyncio.to_thread(fare_model.refresh, True)
     stats = fare_model.get(leg.fare_kind, km, origin_cell, dest_cell, now_ist().hour)
-    log("fare.voted", kind=leg.fare_kind, band=band(km), verdict=body.verdict)
+    log("fare.voted", kind=leg.fare_kind, band=band(km), verdict=body.verdict, signed_in=bool(uid))
     fare = round(leg.base_fare * stats["multiplier"])
+    # Re-price this leg in the cached route so the card, the total and later votes all agree.
+    price_leg(leg, stats)
+    total_route_cost(route)
     return {
+        "leg": leg,
+        "route_cost": route.cost,
         "kind": leg.fare_kind,
         "band": band(km),
         "fare": fare,

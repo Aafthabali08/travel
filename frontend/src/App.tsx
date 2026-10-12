@@ -107,6 +107,9 @@ type VoteResult = {
   applied: boolean;
   needed?: number;
   message?: string;
+  // The leg re-priced with what the model just learned, and the new route total.
+  leg?: Leg;
+  route_cost?: number | null;
 };
 const PRICE_NOTE =
   "Prices are estimates. They can differ with driver and vehicle availability, holidays and festivals, and weather. Our model and Gemini's suggestion can also be inaccurate at times.";
@@ -217,10 +220,12 @@ function FareVote({
   routeId,
   legIndex,
   fare,
+  onVoted,
 }: {
   routeId: string;
   legIndex: number;
   fare: number;
+  onVoted: (result: VoteResult) => void;
 }) {
   const [step, setStep] = useState<"ask" | "paid" | "sending" | "done">("ask");
   const [paid, setPaid] = useState("");
@@ -239,6 +244,7 @@ function FareVote({
       });
       setResult(r);
       setStep("done");
+      onVoted(r);
       log("fare.voted", verdict);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -1126,6 +1132,25 @@ export default function App() {
     log("navigation.external_opened", app);
     if (!active) startNavigation();
   }
+  // Show what the fare model learned from a vote right away: the step's fare, rider count
+  // and range, plus the route total, in both the selected journey and the route list.
+  function applyVote(routeId: string, index: number, r: VoteResult) {
+    if (!r.leg) return;
+    const update = (route: Route): Route =>
+      route.id !== routeId
+        ? route
+        : {
+            ...route,
+            cost: r.route_cost ?? route.cost,
+            legs: route.legs.map((l, i) =>
+              i === index
+                ? { ...l, ...r.leg, polyline: l.polyline, steps: l.steps }
+                : l,
+            ),
+          };
+    setSelected((s) => (s ? update(s) : s));
+    setRoutes((all) => all.map(update));
+  }
   const createdAt = useRef(Date.now() / 1000);
   useEffect(() => {
     createdAt.current = Date.now() / 1000;
@@ -1720,6 +1745,7 @@ export default function App() {
                             routeId={selected.id}
                             legIndex={i}
                             fare={leg.cost}
+                            onVoted={(r) => applyVote(selected.id, i, r)}
                           />
                         )}
                         {i === legIndex && (

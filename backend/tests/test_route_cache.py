@@ -178,3 +178,49 @@ def test_turning_the_cache_off_calls_google_every_time(client, google, db, monke
     spent = total_calls(google)
     search(client)
     assert total_calls(google) == 2 * spent and not route_cache
+
+
+def test_a_vote_returns_the_repriced_leg_and_total(client, google, db):
+    data = search(client)
+    route_id = auto_route_id(data)
+    shown = auto_leg(data)["cost"]
+    for rider in range(1, 4):
+        result = client.post("/api/fares/vote", json={
+            "route_id": route_id, "leg": 0, "verdict": "wrong", "paid": 150,
+            "voter": f"{rider:02d}" * 16}).json()
+        # The card can show this straight away: same numbers as the next search will give.
+        assert result["leg"]["fare_voters"] == rider
+        assert result["leg"]["cost"] == result["fare"]
+        assert result["route_cost"] == result["leg"]["cost"]
+    assert result["leg"]["fare_applied"] is True and result["leg"]["cost"] > shown
+    assert result["leg"]["fare_low"] < result["leg"]["cost"] < result["leg"]["fare_high"]
+    assert auto_leg(search(client))["cost"] == result["leg"]["cost"]
+
+
+def test_signed_in_votes_count_the_account_not_the_browser_id(client, google, db, monkeypatch):
+    import jwt as pyjwt
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from backend.app import firebase_auth
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    monkeypatch.setenv("FIREBASE_PROJECT_ID", "demo-routewise")
+    monkeypatch.setattr(firebase_auth, "_signing_key", lambda _t: key.public_key())
+
+    def token(uid):
+        now = int(time.time())
+        claims = {"iss": "https://securetoken.google.com/demo-routewise", "aud": "demo-routewise",
+                  "sub": uid, "iat": now, "exp": now + 600}
+        return {"Authorization": "Bearer " + pyjwt.encode(claims, key, algorithm="RS256")}
+
+    data = client.post("/api/routes/search", headers=token("alice"), json={
+        "origin": A.model_dump(), "destination": B.model_dump(), "modes": ["AUTO"]}).json()
+    route_id = auto_route_id(data)
+    # One account with three different browser IDs is still one rider.
+    for browser in ("aa", "bb", "cc"):
+        result = client.post("/api/fares/vote", headers=token("alice"), json={
+            "route_id": route_id, "leg": 0, "verdict": "wrong", "paid": 150,
+            "voter": browser * 16}).json()
+        assert result["leg"]["fare_voters"] == 1
+    result = client.post("/api/fares/vote", headers=token("bob"), json={
+        "route_id": route_id, "leg": 0, "verdict": "wrong", "paid": 150, "voter": "aa" * 16}).json()
+    assert result["leg"]["fare_voters"] == 2
