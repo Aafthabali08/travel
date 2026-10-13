@@ -413,7 +413,8 @@ def test_what_riders_pay_for_one_trip_length_predicts_nearby_lengths_only(client
         assert leg["cost"] > leg["base_fare"] * 1.2
     hired[0] = 15000
     far = search(client, C, D)["legs"][0]
-    assert far["cost"] == far["base_fare"] and far["fare_voters"] == 0
+    # Shown fares are whole rupees; night fare cards can have half-rupees.
+    assert far["cost"] == float(round(far["base_fare"])) and far["fare_voters"] == 0
 
 
 def test_the_same_price_pattern_is_predicted_for_new_trips_nearby(client, hired, db):
@@ -500,3 +501,48 @@ def test_votes_are_saved_and_keep_shaping_fares_after_a_restart(client, hired, d
     cheaper = search(client)["legs"][0]["cost"]
     assert base < cheaper < here
     assert len(storage.fetch_votes()) == 2 * MIN_ZONE_VOTERS
+
+
+def test_postgres_tables_get_row_level_security(monkeypatch):
+    """Supabase's public REST API must not expose app tables; RLS is switched on at startup."""
+    statements = []
+
+    class Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, stmt):
+            statements.append(str(stmt))
+
+    class Engine:
+        def begin(self):
+            return Conn()
+
+    storage.lock_down_tables(Engine())
+    assert statements == [
+        f"ALTER TABLE IF EXISTS {t} ENABLE ROW LEVEL SECURITY"
+        for t in ("fare_votes", "gemini_fares", "user_vehicle_profiles")
+    ]
+
+
+def test_a_permission_error_on_rls_does_not_stop_the_app():
+    from sqlalchemy.exc import ProgrammingError
+
+    class Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, stmt):
+            raise ProgrammingError(str(stmt), {}, Exception("must be owner of table"))
+
+    class Engine:
+        def begin(self):
+            return Conn()
+
+    storage.lock_down_tables(Engine())  # logs a warning, raises nothing

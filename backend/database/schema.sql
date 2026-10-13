@@ -131,3 +131,10 @@ CREATE TABLE IF NOT EXISTS fuel_prices (
 );
 CREATE TABLE IF NOT EXISTS parking_rules (id bigserial PRIMARY KEY, place_id text, source text NOT NULL, data jsonb NOT NULL);
 CREATE TABLE IF NOT EXISTS toll_rules (id bigserial PRIMARY KEY, source text NOT NULL, data jsonb NOT NULL);
+
+-- Hosts such as Supabase expose the public schema through a REST API with a public key.
+-- RLS with no policies closes that API; the backend connects as the owner and is unaffected.
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_vehicle_profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE fare_votes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE gemini_fares ENABLE ROW LEVEL SECURITY;

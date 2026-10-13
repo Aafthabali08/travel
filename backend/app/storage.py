@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import logging
 import os
 import time
 import uuid
@@ -108,7 +109,30 @@ def init_schema():
         conn.execute(text(GEMINI_FARES_DDL))
         if engine.dialect.name == "postgresql":
             conn.execute(text(PROFILES_DDL))
+    if engine.dialect.name == "postgresql":
+        lock_down_tables(engine)
     return True
+
+
+APP_TABLES = ("fare_votes", "gemini_fares", "user_vehicle_profiles")
+
+
+def lock_down_tables(engine):
+    """Turn on row-level security with no policies for every app table.
+
+    Hosts like Supabase publish the public schema through a REST API reachable with a public key;
+    RLS with no policies makes that API return nothing. The backend connects as the tables' owner,
+    which RLS does not restrict, so the app itself is unaffected.
+    """
+    for table in APP_TABLES:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE IF EXISTS {table} ENABLE ROW LEVEL SECURITY"))
+        except SQLAlchemyError as e:
+            # Not the owner (e.g. a read-only role): leave it to the database admin, keep serving.
+            logging.getLogger("routewise").warning(
+                json.dumps({"event": "database.rls_not_enabled", "table": table, "error": str(e)[:200]})
+            )
 
 
 def database_status():
