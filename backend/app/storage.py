@@ -30,15 +30,24 @@ CREATE TABLE IF NOT EXISTS fare_votes (
     dest_cell varchar(16),
     trip_km double precision,
     trip_minutes double precision,
-    hour smallint
+    hour smallint,
+    gemini_fare double precision,
+    range_low double precision,
+    range_high double precision
 )
 """
+# Columns added after the first release; init_schema adds any that an existing table lacks.
+# gemini_fare / range_low / range_high record what was shown when the rider voted, so the
+# admin "Model accuracy" panel can score every predictor against what the rider then paid.
 VOTE_EXTRA_COLUMNS = {
     "origin_cell": "varchar(16)",
     "dest_cell": "varchar(16)",
     "trip_km": "double precision",
     "trip_minutes": "double precision",
     "hour": "smallint",
+    "gemini_fare": "double precision",
+    "range_low": "double precision",
+    "range_high": "double precision",
 }
 GEMINI_FARES_DDL = """
 CREATE TABLE IF NOT EXISTS gemini_fares (
@@ -151,7 +160,8 @@ def fetch_votes():
         rows = conn.execute(
             text(
                 "SELECT voter_hash, kind, band, base_fare, shown_fare, paid_fare, verdict, created_at, "
-                "origin_cell, dest_cell, trip_km, trip_minutes, hour FROM fare_votes WHERE created_at > :since"
+                "origin_cell, dest_cell, trip_km, trip_minutes, hour, gemini_fare, range_low, range_high "
+                "FROM fare_votes WHERE created_at > :since"
             ),
             {"since": time.time() - 365 * 86400},
         )
@@ -170,13 +180,16 @@ def fetch_votes():
                 "km": r[10],
                 "minutes": r[11],
                 "hour": r[12],
+                "gemini_fare": r[13],
+                "range_low": r[14],
+                "range_high": r[15],
             }
             for r in rows
         ]
 
 
 def save_vote(voter, kind, band, base, shown, paid, verdict, origin_cell=None, dest_cell=None,
-              km=None, minutes=None, now=None):
+              km=None, minutes=None, now=None, gemini_fare=None, range_low=None, range_high=None):
     """One vote per rider, fare kind and distance band per 24 hours; a newer vote replaces it.
 
     Alongside the price it keeps what the model learns from: exact trip distance and duration,
@@ -196,9 +209,9 @@ def save_vote(voter, kind, band, base, shown, paid, verdict, origin_cell=None, d
             conn.execute(
                 text(
                     "INSERT INTO fare_votes (id, voter_hash, kind, band, base_fare, shown_fare, paid_fare, verdict, "
-                    "created_at, origin_cell, dest_cell, trip_km, trip_minutes, hour) "
+                    "created_at, origin_cell, dest_cell, trip_km, trip_minutes, hour, gemini_fare, range_low, range_high) "
                     "VALUES (:id, :voter, :kind, :band, :base, :shown, :paid, :verdict, :now, :origin_cell, "
-                    ":dest_cell, :km, :minutes, :hour)"
+                    ":dest_cell, :km, :minutes, :hour, :gemini_fare, :range_low, :range_high)"
                 ),
                 {
                     "id": str(uuid.uuid4()),
@@ -215,6 +228,9 @@ def save_vote(voter, kind, band, base, shown, paid, verdict, origin_cell=None, d
                     "km": km,
                     "minutes": minutes,
                     "hour": hour,
+                    "gemini_fare": gemini_fare,
+                    "range_low": range_low,
+                    "range_high": range_high,
                 },
             )
     except SQLAlchemyError as exc:

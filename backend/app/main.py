@@ -28,6 +28,7 @@ from .fare_model import (
 from . import gemini
 from . import storage
 from . import firebase_auth
+from . import model_eval
 
 load_dotenv()
 logger = logging.getLogger("routewise")
@@ -116,7 +117,7 @@ async def cached_routes(kind, query, fetch):
 
 def needs_auth(path: str) -> bool:
     """Endpoints that spend Google Maps/Gemini quota need a signed-in user (photos load via <img>, so stay open)."""
-    if path.startswith(("/api/routes/", "/api/navigation/")) or path == "/api/fares/vote":
+    if path.startswith(("/api/routes/", "/api/navigation/", "/api/admin/")) or path == "/api/fares/vote":
         return True
     return path.startswith("/api/places/") and not path.endswith("/photo") and path != "/api/places/stop-photo"
 
@@ -137,6 +138,7 @@ async def trace(request: Request, call_next):
             trace_id.reset(token)
             return JSONResponse(status_code=401, content={"error": str(e), "request_id": request.state.trace})
         request.state.uid = claims["sub"]
+        request.state.claims = claims
         # Count the per-minute limit per account, so users behind one NAT don't share a budget.
         key = "uid:" + claims["sub"]
     for old in list(requests):
@@ -553,6 +555,10 @@ async def vote_fare(body: FareVote, request: Request):
         dest_cell,
         km,
         leg.duration / 60,
+        None,
+        leg.gemini_fare if leg.gemini_status == "ok" else None,
+        leg.fare_low,
+        leg.fare_high,
     )
     await asyncio.to_thread(fare_model.refresh, True)
     stats = fare_model.get(leg.fare_kind, km, origin_cell, dest_cell, now_ist().hour)
@@ -570,6 +576,39 @@ async def vote_fare(body: FareVote, request: Request):
         "needed": MIN_VOTERS,
         "message": progress_message(stats["voters"], stats["applied"], fare, leg.base_fare),
         **stats,
+    }
+
+
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "aafthabali08@gmail.com").lower()
+
+
+def require_admin(request: Request):
+    """Same rule as firestore.rules: the admin email, verified. Open only when sign-in is off (local dev)."""
+    if not firebase_auth.enabled():
+        return
+    claims = getattr(request.state, "claims", {}) or {}
+    if str(claims.get("email", "")).lower() != ADMIN_EMAIL or claims.get("email_verified") is not True:
+        raise HTTPException(403, "Only the RouteWise admin can view this.")
+
+
+@app.get("/api/admin/model-accuracy")
+async def model_accuracy(request: Request):
+    """Real time-based backtest over rider reports, plus the simulated benchmark."""
+    require_admin(request)
+    real, note = None, ""
+    if not os.getenv("DATABASE_URL"):
+        note = "No database configured, so there are no rider reports to score yet."
+    else:
+        try:
+            rows = await asyncio.to_thread(storage.fetch_votes)
+            real = model_eval.real_report(rows)
+        except Exception:
+            note = "The rider-report database is unreachable right now."
+    return {
+        "real": real,
+        "note": note,
+        "benchmark": await asyncio.to_thread(model_eval.benchmark),
+        "generated_at": time.time(),
     }
 
 

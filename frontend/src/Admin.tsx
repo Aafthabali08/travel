@@ -28,6 +28,7 @@ import {
   Server,
   Settings,
   ShieldAlert,
+  Target,
   Ticket as TicketIcon,
   Trash2,
   UserCheck,
@@ -35,6 +36,7 @@ import {
 } from "lucide-react";
 import { sendEmailVerification } from "firebase/auth";
 import { api } from "./api";
+import ModelAccuracy from "./ModelAccuracy";
 import { useAuth } from "./auth";
 import { ADMIN_EMAIL, db, isAdminEmail } from "./firebase";
 import {
@@ -74,6 +76,7 @@ const TABS = [
   { id: "usage", label: "Usage & quotas", icon: Gauge },
   { id: "tickets", label: "Tickets", icon: TicketIcon },
   { id: "chat", label: "Chat", icon: MessagesSquare },
+  { id: "accuracy", label: "Model accuracy", icon: Target },
   { id: "problems", label: "Problems", icon: AlertTriangle },
   { id: "notifications", label: "Notifications", icon: Bell },
   { id: "settings", label: "Settings", icon: Settings },
@@ -1621,6 +1624,8 @@ function Dashboard({ tab, itemId }: { tab: TabId; itemId?: string }) {
             <TicketsTab d={d} selected={itemId} />
           ) : tab === "chat" ? (
             <ChatTab d={d} selected={itemId} />
+          ) : tab === "accuracy" ? (
+            <ModelAccuracy />
           ) : tab === "problems" ? (
             <ProblemsTab d={d} />
           ) : tab === "notifications" ? (

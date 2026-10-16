@@ -299,3 +299,77 @@ test("dark theme toggles and is remembered", async ({ page }) => {
   await page.getByRole("button", { name: "Switch to light theme" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
 });
+
+test("model accuracy: empty state and the simulated benchmark load from the backend", async ({ page, browser, baseURL }) => {
+  const admin = await adminPage(browser, baseURL!);
+  const errors: string[] = [];
+  admin.on("pageerror", (e) => errors.push(e.message));
+  await admin.goto("/#/admin/accuracy");
+  await expect(admin.getByRole("heading", { name: "Model accuracy", level: 1 })).toBeVisible();
+  await expect(admin.getByText("No rider reports to score", { exact: true })).toBeVisible({ timeout: 30_000 });
+  const bench = admin.locator("section", { hasText: "Simulated benchmark" });
+  await expect(bench.locator("tbody tr")).toHaveCount(4);
+  await expect(bench).toContainText("Stress test");
+  await expect(admin.getByText("Why not accuracy, precision or F1?")).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("model accuracy: every metric, predictor and fare type is shown", async ({ page, browser, baseURL }) => {
+  const m = (mae: number, mape: number, r2: number, bias: number, within10: number, n = 40, coverage: number | null = null) => ({
+    n, mae, rmse: mae * 1.4, mape, medape: mape * 0.8, r2, bias, within10, coverage, coverage_n: coverage == null ? 0 : 30,
+  });
+  const table = {
+    routewise: m(12.5, 8.2, 0.94, -4.1, 70, 40, 71),
+    card: m(48.0, 24.9, 0.41, -46, 12),
+    average: m(25.3, 16.2, 0.84, -13, 41),
+    gemini: m(30.1, 18.4, 0.7, 9.5, 35, 22),
+  };
+  const body = {
+    note: "",
+    real: {
+      reports: 40,
+      paid_reports: 28,
+      skipped: { no_amount: 3, absurd: 1 },
+      all: table,
+      paid_only: { ...table, routewise: m(15.1, 9.9, 0.91, -5, 61, 28, 68) },
+      by_kind: { auto: { routewise: m(10, 7, 0.9, -3, 75, 30), card: m(40, 22, 0.4, -40, 10, 30) },
+                 cab: { routewise: m(20, 11, 0.8, -6, 55, 10), card: m(60, 30, 0.3, -55, 5, 10) } },
+      curve: Array.from({ length: 40 }, (_, i) => ({ index: i + 1, created_at: 0, routewise: 25 - i * 0.4, card: 25 })),
+      recent: [{ kind: "auto", km: 6.6, created_at: Date.now() / 1000, verdict: "wrong", actual: 110, routewise: 92,
+                 card: 91, average: 101, gemini: 180, range: [80, 105] }],
+    },
+    benchmark: {
+      holdout: 250, seeds: 5, stress: { card: 25.7, average: 16.6, routewise: 9.6 },
+      rows: [10, 30, 100, 300].map((riders, i) => ({
+        riders, routewise: { ...m(33 - i * 7, 16.7 - i * 3, 0.7 + i * 0.08, -31 + i * 9, 33 + i * 13, 250, 64 + i * 6), mape_sd: 1.2 },
+        card: m(51, 25.7, 0.44, -50, 11, 250), average: m(30, 19.5 - i, 0.77, -18, 30, 250),
+      })),
+    },
+  };
+  const admin = await adminPage(browser, baseURL!);
+  await admin.route("**/api/admin/model-accuracy", (r) => r.fulfill({ json: body }));
+  await admin.goto("/#/admin/accuracy");
+  const metrics = admin.locator("section", { hasText: "All metrics, every predictor" });
+  for (const label of ["MAE", "RMSE", "MAPE", "Median % error", "R²", "Bias", "Within ±10%", "Range coverage"])
+    await expect(metrics.locator("tbody td strong", { hasText: label }).first()).toBeVisible();
+  for (const name of ["RouteWise model", "Fare card", "Average of reports", "Gemini"])
+    await expect(metrics.locator("thead")).toContainText(name);
+  await expect(metrics.locator("td.best").first()).toContainText("₹12.5");
+  await expect(admin.locator(".tile", { hasText: "RouteWise MAPE" })).toContainText("8.2%");
+  await admin.getByRole("button", { name: /Only reports with a price paid/ }).click();
+  await expect(admin.locator(".tile", { hasText: "RouteWise MAPE" })).toContainText("9.9%");
+  const kinds = admin.locator("section", { hasText: "By fare type" });
+  await expect(kinds).toContainText("Private auto");
+  await expect(kinds).toContainText("Cab");
+  await expect(admin.locator(".curve svg path.series")).toHaveCount(2);
+  await expect(admin.locator("section", { hasText: "Latest scored reports" })).toContainText("₹180");
+  expect(await admin.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  if (process.env.SHOTS) {
+    // Opt-in visual check of both themes: SHOTS=1 npm run test:e2e
+    await admin.setViewportSize({ width: 1440, height: 2600 });
+    await admin.screenshot({ path: "test-results/accuracy-light.png", timeout: 20_000 });
+    await admin.evaluate(() => (document.documentElement.dataset.theme = "dark"));
+    await admin.waitForTimeout(600); // let button colour transitions finish
+    await admin.screenshot({ path: "test-results/accuracy-dark.png", timeout: 20_000 });
+  }
+});

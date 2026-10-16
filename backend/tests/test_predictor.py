@@ -4,58 +4,15 @@ model's predictions for trips nobody has reported get closer to it as riders acc
 import math
 import random
 import time
-from datetime import datetime
 
 import pytest
 
 from backend.app.fare_model import FareModel, cell
-from backend.app.fares import IST, estimate
+from backend.app.fares import estimate
 
-DAY = datetime(2026, 9, 26, 12, 0, tzinfo=IST)
-STATION = (17.7214, 83.2905)
-
-
-def haversine(a, b):
-    la1, lo1, la2, lo2 = map(math.radians, (a[0], a[1], b[0], b[1]))
-    h = math.sin((la2 - la1) / 2) ** 2 + math.cos(la1) * math.cos(la2) * math.sin((lo2 - lo1) / 2) ** 2
-    return 2 * 6371 * math.asin(math.sqrt(h))
-
-
-def truth(km, origin, dest, hour):
-    """The hidden pattern: long trips relatively pricier, a station premium, a cheaper suburb, pricey evenings."""
-    t = 0.30 * math.log(km / 4)
-    if min(haversine(origin, STATION), haversine(dest, STATION)) < 1.8:
-        t += 0.20
-    if (origin[0] < 17.69 and origin[1] < 83.23) or (dest[0] < 17.69 and dest[1] < 83.23):
-        t -= 0.10
-    if 16 <= hour < 22:
-        t += 0.12
-    return t
-
-
-def random_trip(rng):
-    while True:
-        o = (rng.uniform(17.66, 17.76), rng.uniform(83.18, 83.34))
-        d = (rng.uniform(17.66, 17.76), rng.uniform(83.18, 83.34))
-        km = haversine(o, d) * 1.3
-        if 0.8 <= km <= 25:
-            return o, d, km, rng.choice([8, 9, 10, 13, 14, 17, 18, 19, 20, 23, 1])
-
-
-def reports(n, seed, noise=0.10, outliers=0.05):
-    rng, out = random.Random(seed), []
-    for i in range(n):
-        o, d, km, hour = random_trip(rng)
-        base = estimate("auto", km, km * 2.5, DAY)
-        ratio = math.exp(truth(km, o, d, hour) + rng.gauss(0, noise))
-        if rng.random() < outliers:
-            ratio = rng.uniform(0.3, 3.0)
-        out.append({
-            "voter": f"v{i}", "kind": "auto", "band": "3-7 km", "km": km, "hour": hour, "verdict": "wrong",
-            "paid": base * ratio, "base": base, "shown": base, "origin_cell": cell(*o), "dest_cell": cell(*d),
-            "created_at": time.time(),
-        })
-    return out
+# The simulated Vizag pattern is shared with the admin dashboard's benchmark.
+from backend.app.model_eval import DAY, random_trip, truth
+from backend.app.model_eval import synthetic_reports as reports
 
 
 def error(rows, holdout=250):
